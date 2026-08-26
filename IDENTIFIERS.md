@@ -10,11 +10,13 @@ derived from a temporary spike or the user's filesystem.
 | Tauri reverse-DNS application ID | `com.deepify.desktop` | Stable vendor/product namespace used by Tauri and application data paths. |
 | Executable | `deepify` | Lowercase product executable. |
 | Firefox native-host ID | `com.deepify.browser` | Native messaging host name shared by Firefox and Zen manifests. |
-| Firefox extension ID namespace | `focus@deepify.local` | Fixed development/release namespace; a signed AMO ID can replace this at packaging time without changing protocol messages. |
+| Firefox extension ID namespace | `focus@deepify.local` | Permanently reserved Deepify extension ID for this product. Development and release manifests use the same ID. |
 
 The Phase 2 browser integration is simulated. These names do not claim that a
 real extension or native host has been installed. The native host contract
-rejects unpaired profiles and remains a Phase 3 integration boundary.
+rejects unpaired profiles and remains a Phase 3 integration boundary. The
+extension ID is intentionally fixed now; publishing/signing does not authorize
+changing it.
 
 ## Toolchain pin
 
