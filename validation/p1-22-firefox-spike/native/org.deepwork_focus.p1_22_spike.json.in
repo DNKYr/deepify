@@ -1,0 +1,7 @@
+{
+  "name": "org.deepwork_focus.p1_22_spike",
+  "description": "Deepwork Focus P1-22 disposable native messaging host",
+  "path": "@HOST_PATH@",
+  "type": "stdio",
+  "allowed_extensions": ["p1-22-spike@deepwork-focus-bot.invalid"]
+}

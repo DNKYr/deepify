@@ -1,0 +1,20 @@
+{
+  "manifest_version": 2,
+  "name": "Deepwork Focus P1-22 Spike",
+  "version": "0.1.0",
+  "description": "Disposable feasibility spike for browser restriction and native messaging.",
+  "permissions": ["tabs", "webNavigation", "nativeMessaging", "storage", "contextualIdentities"],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "p1-22-spike@deepwork-focus-bot.invalid",
+      "strict_min_version": "91.0"
+    }
+  },
+  "incognito": "not_allowed",
+  "background": { "scripts": ["background.js"] },
+  "browser_action": {
+    "default_title": "Focus restriction spike",
+    "default_popup": "popup.html"
+  },
+  "web_accessible_resources": ["blocked.html"]
+}

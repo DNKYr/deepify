@@ -1,0 +1,8 @@
+{
+  "name": "p1-23-local-audio-spike",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test.js"
+  }
+}

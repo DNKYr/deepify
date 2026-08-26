@@ -70,7 +70,7 @@ When Niri reports a new non-whitelisted window during an active session:
 - Multiple windows from one process have separate window IDs and can be closed independently.
 - Repeated `WindowOpenedOrChanged` events must be deduplicated by window ID and relevant changed fields.
 
-Full evidence is recorded in [`P1-21_NIRI_VALIDATION.md`](P1-21_NIRI_VALIDATION.md).
+Full evidence is recorded in [`validation/P1-21_NIRI_VALIDATION.md`](validation/P1-21_NIRI_VALIDATION.md).
 
 ---
 
@@ -469,7 +469,7 @@ The MVP does not offer an automatic break because breaks are outside the session
 
 ID3 title, artist, and album tags take precedence. When tags are absent, `Artist - Title.mp3` supplies artist and title; otherwise the filename stem is the title.
 The persisted queue retains entries whose paths still exist, removes deleted paths, and appends newly discovered paths in lexical order. A move or rename is a new path and is treated as remove-plus-add rather than guessed identity matching.
-Full evidence and the implementation handoff are recorded in [`p1-23-local-audio-spike/README.md`](p1-23-local-audio-spike/README.md).
+Full evidence and the implementation handoff are recorded in [`validation/p1-23-local-audio-spike/README.md`](validation/p1-23-local-audio-spike/README.md).
 
 ---
 
@@ -506,7 +506,7 @@ The desktop app uses one quiet shell for all non-browser screens:
 
 ```text
 +--------------------------------------------------------------------------------+
-| Deep Work Focus                                      [status] [Settings]        |
+| Deepify                                              [status] [Settings]        |
 +----------------------+---------------------------------------------------------+
 | Focus Room           |                                                         |
 | Sound Library        |                     page content                        |
@@ -537,13 +537,13 @@ music, but cannot finish until required desktop and browser integrations are hea
 
 ```text
 +--------------------------------------------------------------------------------+
-| Set up Deep Work Focus                                      Step 1 of 5          |
+| Set up Deepify                                              Step 1 of 5          |
 | [Integrations] -- [Browser] -- [Whitelist] -- [Music] -- [Ready]               |
 +--------------------------------------------------------------------------------+
 |                                                                                |
 | Protect your focus on this computer                                            |
 |                                                                                |
-| Deep Work Focus uses Niri, Noctalia, and one Firefox-based browser profile.    |
+| Deepify uses Niri, Noctalia, and one Firefox-based browser profile.            |
 | Restrictions are local and work without an internet connection.                |
 |                                                                                |
 | [✓] Niri / Wayland                 Connected                                  |
@@ -712,7 +712,7 @@ This is rendered by the browser extension in place of a blocked HTTP(S) destinat
 
 ```text
 +--------------------------------------------------------------------------------+
-| Deep Work Focus — Website blocked                                             |
+| Deepify — Website blocked                                                     |
 +--------------------------------------------------------------------------------+
 |                                                                                |
 |                              Focus Shield                                      |
@@ -985,7 +985,7 @@ Build a small disposable prototype to verify that Niri supports the required app
 
 ### Deliverable
 
-Documented in [`P1-21_NIRI_VALIDATION.md`](P1-21_NIRI_VALIDATION.md), including tested IPC commands/events, measured close behavior, observed limitations, and the recommended MVP enforcement behavior. Niri provides focus reversal rather than focus prevention, and close requests remain cooperative when an application presents an unsaved-work confirmation.
+Documented in [`validation/P1-21_NIRI_VALIDATION.md`](validation/P1-21_NIRI_VALIDATION.md), including tested IPC commands/events, measured close behavior, observed limitations, and the recommended MVP enforcement behavior. Niri provides focus reversal rather than focus prevention, and close requests remain cooperative when an application presents an unsaved-work confirmation.
 
 ### Accepted implementation constraints
 
@@ -1006,7 +1006,7 @@ Documented in [`P1-21_NIRI_VALIDATION.md`](P1-21_NIRI_VALIDATION.md), including 
 **Priority:** Critical
 
 Build a small disposable extension and desktop communication prototype. The spike is
-located in [`p1-22-firefox-spike/`](p1-22-firefox-spike/).
+located in [`validation/p1-22-firefox-spike/`](validation/p1-22-firefox-spike/).
 
 ### Verification checklist
 
@@ -1084,7 +1084,7 @@ but the MVP does not provide container-specific policy.
 - Package the native host through `programs.firefox.nativeMessagingHosts.packages` and verify the final native-host manifest location for the target Zen package.
 - Replace or port the disposable Node host with the production Tauri/native helper implementation.
 
-Full spike evidence and reproduction instructions are in [`p1-22-firefox-spike/README.md`](p1-22-firefox-spike/README.md).
+Full spike evidence and reproduction instructions are in [`validation/p1-22-firefox-spike/README.md`](validation/p1-22-firefox-spike/README.md).
 
 ---
 
@@ -1109,7 +1109,7 @@ Verify local audio behavior in the proposed Tauri stack.
 
 ### Validation results — 2026-08-26
 
-The disposable harness in [`p1-23-local-audio-spike/`](p1-23-local-audio-spike/) passed
+The disposable harness in [`validation/p1-23-local-audio-spike/`](validation/p1-23-local-audio-spike/) passed
 the file-selection, MP3 playback/decode, metadata, persistence, rescan, and queue tests.
 The output-device loss/recovery state contract also passed. A real output-device switch
 was not observable in this headless run because no PipeWire output device was available;

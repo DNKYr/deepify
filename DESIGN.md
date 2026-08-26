@@ -1,4 +1,4 @@
-# Deep Work Focus App — Design Document
+# Deepify — Design Document
 
 ## Status
 
@@ -6,13 +6,13 @@
 - **Document type:** Living design document
 - **Last updated:** 2026-08-26
 
-This document captures the current product direction. Decisions and details will be revised incrementally as the design develops. Phase 1 decisions, approved wireframes, and acceptance criteria are recorded in [`PHASE1_ISSUES.md`](PHASE1_ISSUES.md).
+This document captures the current product direction. Decisions and details will be revised incrementally as the design develops. Phase 1 decisions, approved wireframes, and acceptance criteria are recorded in [`PHASE1_ISSUES.md`](PHASE1_ISSUES.md). Production boundaries and Phase 2 work are defined in [`ARCHITECTURE.md`](ARCHITECTURE.md) and [`PHASE2_IMPLEMENTATION_PLAN.md`](PHASE2_IMPLEMENTATION_PLAN.md).
 
 ---
 
 ## 1. Product Overview
 
-A calm desktop focus application built around three connected systems:
+**Deepify** is a calm desktop focus application built around three connected systems:
 
 1. A focus timer
 2. A local music playlist
@@ -61,11 +61,11 @@ A normal website cannot reliably restrict other applications or websites. The pr
 
 ### Proposed stack
 
-- **Desktop shell:** Tauri
-- **Interface:** React and TypeScript
+- **Desktop shell:** Tauri 2
+- **Interface:** React, TypeScript, and Vite
 - **Native integration:** Rust and platform-specific helpers
-- **Website filtering:** Companion Firefox extension
-- **Local storage:** SQLite or local application files
+- **Website filtering:** Companion Firefox extension and separate Rust native-messaging host
+- **Local storage:** Backend-owned SQLite plus direct references to local audio files/folders
 - **Accounts and cloud services:** None; all data remains on the user's device
 - **Initial package format:** Nix package
 
@@ -288,13 +288,19 @@ Gentle and Strict modes may be designed after the Standard-mode MVP is validated
 
 ## 8. Next Work
 
-Phase 1 product definition is complete. Phase 2 should establish the production project architecture and build a functional prototype of the approved wireframes with simulated restriction integrations.
+Phase 1 product definition is complete. The Phase 2 architecture and work breakdown are documented in [`ARCHITECTURE.md`](ARCHITECTURE.md) and [`PHASE2_IMPLEMENTATION_PLAN.md`](PHASE2_IMPLEMENTATION_PLAN.md). Phase 2 builds the approved desktop flow with simulated restriction integrations before Phase 3 and Phase 4 connect real enforcement.
 
-Implementation follow-ups include P1-12 crash recovery, real PipeWire device switching, production Tauri audio integration, and collecting the target window inventory for the tentative P1-10 system-component allowlist.
+P2-01 is ready for Codex implementation. The product name is **Deepify**, the normalized desktop executable is `deepify`, and the nixpkgs release target is 26.05. Remaining P2-01 identifiers and exact tool versions still need to be pinned. Implementation follow-ups include P1-12 crash recovery, real PipeWire device switching, production Tauri audio integration, and collecting the target window inventory for the tentative P1-10 system-component allowlist.
 
 ---
 
 ## 9. Decision Log
+
+### 2026-08-26 — MVP name and executable
+
+- **Decision:** The MVP product name is **Deepify**.
+- **Decision:** The desktop executable uses the normalized lowercase name `deepify`.
+- **Toolchain baseline:** Target the nixpkgs 26.05 release; the exact flake revision remains to be locked by P2-01.
 
 ### 2026-08-25 — Initial operating system
 
@@ -356,7 +362,7 @@ Implementation follow-ups include P1-12 crash recovery, real PipeWire device swi
   validation.
 - **Blocked-page constraint:** The production blocked page cannot restore a URL while the
   session is active. The spike's manual restore button is diagnostic only.
-- **Evidence:** [`p1-22-firefox-spike/README.md`](p1-22-firefox-spike/README.md)
+- **Evidence:** [`validation/p1-22-firefox-spike/README.md`](validation/p1-22-firefox-spike/README.md)
 
 ### 2026-08-25 — Blocked apps during an active session
 
@@ -369,7 +375,7 @@ Implementation follow-ups include P1-12 crash recovery, real PipeWire device swi
 - **Decision:** Pre-session validation includes every Niri-reported window. An app with no user-facing window is considered closed for focus purposes.
 - **Decision:** A session enables Noctalia Do Not Disturb and restores the user's previous state afterward.
 - **P1-21 validation:** Niri window inventory, event monitoring, targeted cooperative close, focus reversal, IPC failure detection, and Noctalia state preservation all passed. Focus prevention is unavailable, so enforcement remains best-effort. Repeated change events require deduplication, and unsaved-work prompts can hold a window open.
-- **Evidence:** [`P1-21_NIRI_VALIDATION.md`](P1-21_NIRI_VALIDATION.md)
+- **Evidence:** [`validation/P1-21_NIRI_VALIDATION.md`](validation/P1-21_NIRI_VALIDATION.md)
 - **P1-10 identity policy:** Use Wayland `app_id`; allow missing/unknown IDs; ignore terminal-hosted processes; permanently allow the focus app; and allow unmonitored browser profiles. System components are implicitly allowed, but their exact built-in list remains tentative.
 - **Known bypasses:** Unknown IDs, terminal-hosted commands, unmonitored profiles, and private browser windows are outside complete MVP enforcement.
 
@@ -411,7 +417,7 @@ Implementation follow-ups include P1-12 crash recovery, real PipeWire device swi
 - **Storage:** Persist direct file paths, folder paths, and queue order locally; do not copy audio into app storage. Missing direct files remain unavailable.
 - **Output devices:** A device-loss/recovery state contract was validated. Real PipeWire device switching and production Tauri player integration remain implementation/release tests.
 - **Deferred:** Shuffle, repeat, and non-MP3 formats.
-- **Evidence:** [`p1-23-local-audio-spike/README.md`](p1-23-local-audio-spike/README.md)
+- **Evidence:** [`validation/p1-23-local-audio-spike/README.md`](validation/p1-23-local-audio-spike/README.md)
 
 ### 2026-08-25 — Local-only data
 
