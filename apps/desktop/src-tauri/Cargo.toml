@@ -8,6 +8,8 @@ name = "deepify"
 path = "src/lib.rs"
 
 [dependencies]
+tauri = { version = "2.8.4" }
+tauri-plugin-single-instance = "2.3.6"
 
 [[bin]]
 name = "deepify"
