@@ -7,6 +7,8 @@ edition.workspace = true
 name = "deepify"
 path = "src/lib.rs"
 
+[dependencies]
+
 [[bin]]
 name = "deepify"
 path = "src/main.rs"
