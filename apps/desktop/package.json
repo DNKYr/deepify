@@ -1,0 +1,12 @@
+{
+  "name": "@deepify/desktop",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "test": "node --test test",
+    "typecheck": "node scripts/typecheck.mjs",
+    "lint": "node scripts/lint.mjs"
+  }
+}

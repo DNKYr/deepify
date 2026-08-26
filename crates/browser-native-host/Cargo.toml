@@ -1,0 +1,8 @@
+[package]
+name = "deepify-browser-native-host"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "deepify-browser-native-host"
+path = "src/main.rs"

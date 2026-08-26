@@ -1,0 +1,12 @@
+[package]
+name = "deepify-desktop"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "deepify"
+path = "src/lib.rs"
+
+[[bin]]
+name = "deepify"
+path = "src/main.rs"

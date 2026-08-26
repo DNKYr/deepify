@@ -1,0 +1,14 @@
+{
+  "name": "deepify",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": ["apps/desktop"],
+  "scripts": {
+    "dev": "node apps/desktop/scripts/dev.mjs",
+    "test": "node --test apps/desktop/test contracts/test",
+    "typecheck": "node apps/desktop/scripts/typecheck.mjs",
+    "lint": "node apps/desktop/scripts/lint.mjs",
+    "format:check": "node apps/desktop/scripts/format-check.mjs"
+  },
+  "engines": {"node": ">=20"}
+}
