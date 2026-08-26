@@ -241,7 +241,7 @@ Inject a failure at every startup and cleanup step and assert:
 ## P2-06 — Build the vertical Focus Room flow
 
 **Priority:** Critical  
-**Status:** In progress — Focus Room React shell and backend command/event boundary recorded; full Testing Library/Vitest flow remains pending dependency installation.
+**Status:** Completed for the mock vertical UI state/copy flow; full Testing Library/Vitest integration and backend Tauri command registration remain pending.
 
 ### Screens
 
@@ -572,6 +572,13 @@ P2-07 and the initial P2-09 adapter spike can proceed in parallel after the stor
 Begin the Codex loop with P2-01. Incorporate its exact flake/toolchain validation and remaining identifier decisions before beginning P2-02. Do not scaffold Tauri until the reverse-DNS application identifier and native-host naming are chosen, because those values affect local data paths, desktop integration, browser manifests, and future upgrades.
 
 ## Implementation evidence — 2026-08-26
+
+### Sequencing note
+
+The initial shared-worktree pass committed the P2-07 contract before the P2-06
+evidence commit. This is a process deviation only; no P2-08/P2-09 production
+work was used to satisfy P2-06. The P2-06 follow-up below records the actual
+mock UI checks before later milestones are handed off.
 
 The following checks were run in the shared workspace:
 
