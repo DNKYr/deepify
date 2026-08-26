@@ -385,7 +385,7 @@ Duration is required. Intention and playlist are optional.
 
 ## P1-16 — Active-session flow and status
 
-**Status:** Partially resolved; exact UI hierarchy awaits wireframing  
+**Status:** Resolved; P1-20 hierarchy approved
 **Category:** User flow  
 **Priority:** High
 
@@ -403,7 +403,7 @@ Duration is required. Intention and playlist are optional.
 - Persist active session status so that a crash or restart can identify an abandoned session and record it correctly.
 - Count blocked distraction attempts during the session.
 - At session end, show total deep-work time and the number of blocked attempts.
-- Keep the active screen minimal; the prominence of health indicators and whether to show a live attempt history will be decided in P1-20 wireframes.
+- Keep the active screen minimal. P1-20 proposes a compact persistent health row, blocked-attempt count, and latest notice; a scrolling attempt feed is reserved for Session History.
 
 ---
 
@@ -475,7 +475,7 @@ Full evidence and the implementation handoff are recorded in [`p1-23-local-audio
 
 ## P1-20 — Low-fidelity wireframes
 
-**Status:** Draft complete; pending product review
+**Status:** Approved for MVP
 **Category:** UX design  
 **Priority:** High
 
@@ -583,7 +583,7 @@ This is the default landing screen and the destination after a session summary.
 |                                                                                |
 |                         Not working                                            |
 |                                                                                |
-|                         00:00                                                  |
+|                         45:00                                                  |
 |                                                                                |
 |  Duration *       [ 45 min v ]       Intention     [What will you focus on? ]  |
 |  Playlist         [ No music      v ]                                            |
@@ -626,9 +626,9 @@ Validation is a short, blocking gate between the idle room and an active session
 ```
 
 - Show progress while each check runs; do not imply that protection is active yet.
-- A successful check changes the primary action to **Start session**. The app then
-  enables browser restrictions, records the prior DND state, enables DND, starts
-  application monitoring, and starts the timer.
+- A successful check proceeds automatically: show **Checks passed — starting…**, then
+  enable browser restrictions, record the prior DND state, enable DND, start
+  application monitoring, and start the timer. Do not require a second confirmation.
 - Any startup failure shows the failed component and the cleanup result. The app
   returns to Not working and never presents the session as started.
 - The check can find windows on any Niri-reported workspace, including hidden or
@@ -723,7 +723,7 @@ This is rendered by the browser extension in place of a blocked HTTP(S) destinat
 |                 Destination: example.com / path                                |
 |                 Session remaining: 37:42                                       |
 |                                                                                |
-|                 [Return to previous page]                                      |
+|                 [Open a new tab]                                               |
 |                                                                                |
 |                 Restrictions are active. No restore option is available        |
 |                 during this session.                                           |
@@ -733,8 +733,9 @@ This is rendered by the browser extension in place of a blocked HTTP(S) destinat
 - Retain the original URL in extension state, not as a user-editable control.
 - The page must not provide a restore or bypass action while the session is active.
   A normal browser back action should not reveal the blocked destination again.
-- **Return to previous page** navigates to a safe page such as the Focus Room or
-  browser new-tab page; it does not restore the blocked URL.
+- **Open a new tab** navigates to the browser's new-tab page; it does not restore
+  the blocked URL. Browser Back remains subject to the same restriction and cannot
+  expose the blocked destination.
 - Use a clear domain/path summary without exposing query parameters unnecessarily.
 - When the session ends, the extension restores each surviving redirected tab to
   its original URL. The blocked page itself does not need to offer that action.
@@ -895,6 +896,58 @@ Settings is organized around recovery and configuration rather than frequent use
   session, and return DND to its previous state. It must remain accessible from
   the tools needed to recover the app safely.
 - Color-scheme selection is limited to built-in MVP schemes and persists locally.
+
+#### 11. Session History
+
+History is read-only and optimized for quickly reviewing completed and interrupted work.
+
+```text
++--------------------------------------------------------------------------------+
+| Session History                                           [Focus Room]          |
++--------------------------------------------------------------------------------+
+| Today        2h 15m focused · 3 sessions · 7 attempts blocked                  |
+| This week    8h 40m focused                                                   |
+|                                                                                |
+| Date / time       Duration   Intention              Blocked   Finish reason    |
+| Today 14:00       45:00      Write project brief    2         Completed        |
+| Today 10:30       23:18      Review architecture    4         Ended early      |
+| Yesterday 16:00   60:00      —                      1         Completed        |
+|                                                                                |
+| [Select a session to view details]                                             |
++--------------------------------------------------------------------------------+
+```
+
+- Show actual deep-work time, not merely the configured duration.
+- Use the human-readable finish reasons defined by Session Completion.
+- A detail view may show the intention, start/end timestamps, paused time, blocked
+  attempt count, and failed component when relevant; it does not expose browsing
+  destinations or other unnecessary activity details.
+- History remains entirely local and has no sharing or account controls.
+
+#### State and screen transitions
+
+```text
+Not working
+   |
+   +-- Start focus --> Validating -- pass --> Working
+                          |                    |   |
+                          |                    |   +-- Pause --> Paused -- Resume --+
+                          |                    |
+                          |                    +-- Timer ends --> Cleanup --> Summary
+                          |                    +-- End early  --> Cleanup --> Summary
+                          |                    +-- Failure    --> Cleanup --> Summary
+                          |
+                          +-- blocked apps --> Resolve apps --> Validate again
+                          +-- integration failure -----------> Not working + error
+
+Summary -- Back to Focus Room --> Not working
+App restart with abandoned session --> Recovery cleanup --> Interrupted summary
+```
+
+- Restrictions become active only when validation succeeds and session startup begins.
+- All normal and abnormal session exits pass through cleanup before showing a summary.
+- If startup only partially succeeds, P1-11 cleanup returns the app to Not working
+  with a visible error; it never enters Working.
 
 #### Wireframe decisions and deferred polish
 
@@ -1077,13 +1130,13 @@ or Rust audio-crate integration still requires Phase 2 implementation testing.
 
 ## P1-24 — MVP acceptance criteria
 
-**Status:** Draft  
+**Status:** Approved; criteria remain unchecked until implemented and tested
 **Category:** Product definition  
 **Priority:** Critical
 
 Finalize testable acceptance criteria after the behavior and feasibility issues are resolved.
 
-### Initial draft
+### Approved MVP criteria
 
 - [ ] A session cannot start while a detected, identified, non-whitelisted app is open.
 - [ ] Missing or unknown app IDs are visibly labeled and allowed as an MVP limitation.
@@ -1117,7 +1170,7 @@ Finalize testable acceptance criteria after the behavior and feasibility issues 
 
 ### Resolution
 
-_To be finalized._
+Approved as the MVP's implementation and release acceptance baseline. The checkboxes remain unchecked until the corresponding behavior is implemented and verified.
 
 ---
 
@@ -1130,5 +1183,5 @@ Resolve issues in this order to minimize rework:
 3. **P1-01–P1-17:** Product behavior and primary flows — completed for MVP, except the implementation-level P1-12 recovery tests
 4. **P1-18:** Whitelist validation UX — completed
 5. **P1-19/P1-23:** Local audio details and feasibility — completed for MVP feasibility; hardware device switching remains an implementation test
-6. **P1-20:** Low-fidelity wireframes — open
-7. **P1-24:** Final MVP acceptance criteria — draft
+6. **P1-20:** Low-fidelity wireframes — approved
+7. **P1-24:** Final MVP acceptance criteria — approved; verification pending implementation

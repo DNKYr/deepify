@@ -2,11 +2,11 @@
 
 ## Status
 
-- **Stage:** Product definition
+- **Stage:** Phase 1 complete; Phase 2 functional prototype planning
 - **Document type:** Living design document
 - **Last updated:** 2026-08-26
 
-This document captures the current product direction. Decisions and details will be revised incrementally as the design develops. Remaining product-definition work is tracked in [`PHASE1_ISSUES.md`](PHASE1_ISSUES.md).
+This document captures the current product direction. Decisions and details will be revised incrementally as the design develops. Phase 1 decisions, approved wireframes, and acceptance criteria are recorded in [`PHASE1_ISSUES.md`](PHASE1_ISSUES.md).
 
 ---
 
@@ -214,12 +214,13 @@ Apply enforced restrictions and prevent changes to the whitelist or early sessio
 
 ## 6. Delivery Plan
 
-### Phase 1 — Product Definition
+### Phase 1 — Product Definition (complete)
 
 - Confirm Linux as the first supported operating system (completed)
-- Define the behavior of each restriction level
-- Map primary user flows and edge cases
-- Produce low-fidelity wireframes
+- Define the behavior of each restriction level (completed)
+- Map primary user flows and edge cases (completed)
+- Produce and approve low-fidelity wireframes (completed)
+- Approve MVP acceptance criteria (completed)
 
 ### Phase 2 — Functional Prototype
 
@@ -285,9 +286,11 @@ Gentle and Strict modes may be designed after the Standard-mode MVP is validated
 
 ---
 
-## 8. Open Decisions
+## 8. Next Work
 
-Remaining work is tracked in [`PHASE1_ISSUES.md`](PHASE1_ISSUES.md). Product definition now primarily requires P1-20 low-fidelity wireframes and P1-24 final acceptance criteria. P1-12 crash recovery, real PipeWire device switching, and production Tauri audio integration remain implementation tests; the P1-10 system-component allowlist remains tentative until the target window inventory is collected.
+Phase 1 product definition is complete. Phase 2 should establish the production project architecture and build a functional prototype of the approved wireframes with simulated restriction integrations.
+
+Implementation follow-ups include P1-12 crash recovery, real PipeWire device switching, production Tauri audio integration, and collecting the target window inventory for the tentative P1-10 system-component allowlist.
 
 ---
 
@@ -374,6 +377,19 @@ Remaining work is tracked in [`PHASE1_ISSUES.md`](PHASE1_ISSUES.md). Product def
 
 - **Decision:** The MVP has no break cycle. Its states are Not working, Working, and Paused; restrictions remain active while paused.
 - **Decision:** Suspend, clock change, crash, force-close, logout, reboot, or shutdown interrupts and ends an active session. Sessions do not resume afterward, and only one app instance may run.
+
+### 2026-08-26 — Low-fidelity UX structure
+
+- **Approved:** P1-20 defines the shared desktop shell, setup wizard, idle and active Focus Room, validation and blocked-app states, browser blocked page, session summary, Sound Library, whitelist, Settings, Session History, and lifecycle transitions.
+- **Active-session hierarchy:** Keep the timer and intention dominant; show compact integration health, blocked-attempt count, latest warning, and audio controls without a scrolling activity feed.
+- **Navigation:** Hide nonessential primary navigation during Working and Paused states. Restrictions remain visible and active while paused.
+- **Review status:** Approved for the MVP.
+- **Details:** [`PHASE1_ISSUES.md#p1-20--low-fidelity-wireframes`](PHASE1_ISSUES.md#p1-20--low-fidelity-wireframes)
+
+### 2026-08-26 — Phase 1 approval
+
+- **Decision:** P1-20 wireframes and P1-24 acceptance criteria are approved.
+- **Outcome:** Phase 1 product definition is complete. Work may proceed to Phase 2 functional prototype planning and implementation.
 
 ### 2026-08-26 — Whitelist validation
 
