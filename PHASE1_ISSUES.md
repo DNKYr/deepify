@@ -22,7 +22,7 @@ The following decisions are already established:
 
 ## P1-01 — Blocked app behavior during a session
 
-**Status:** Resolved for MVP; technical behavior requires validation in P1-21  
+**Status:** Resolved and validated by P1-21
 **Category:** Standard-mode behavior  
 **Priority:** Critical
 
@@ -60,13 +60,17 @@ When Niri reports a new non-whitelisted window during an active session:
 - The focus app is not tamper-proof because the user controls the same desktop account. Stronger system-level launch prevention belongs to a later Strict-mode investigation, not the Standard-mode MVP.
 - If Niri monitoring or window closure fails, follow the restriction-system failure policy defined in P1-11.
 
-### Validation required in P1-21
+### P1-21 validation results
 
-- Measure event-to-close delay.
-- Confirm the relevant window-open event and its payload.
-- Test apps with unsaved work and close-confirmation dialogs.
-- Test whether focus can be returned to the previous allowed window to reduce access or flicker.
-- Confirm behavior for multiple windows belonging to one blocked process.
+- Niri emitted `WindowOpenedOrChanged` with the window ID, app ID, PID, workspace, and state.
+- The tested app-launch-to-window-event time was approximately 252 ms; this includes application startup and compositor scheduling rather than only monitor latency.
+- A targeted cooperative close completed in approximately 42 ms in the disposable-window test.
+- An unsaved-work confirmation kept the window open, confirming the need for the persistent manual-close warning.
+- Niri cannot prevent initial focus, but the app can restore focus to the last allowed window by ID on a best-effort basis.
+- Multiple windows from one process have separate window IDs and can be closed independently.
+- Repeated `WindowOpenedOrChanged` events must be deduplicated by window ID and relevant changed fields.
+
+Full evidence is recorded in [`P1-21_NIRI_VALIDATION.md`](P1-21_NIRI_VALIDATION.md).
 
 ---
 
@@ -159,13 +163,14 @@ Define exactly how Firefox URLs are compared with whitelist entries.
 
 ### Resolution
 
-P1-06 is fully defined for the MVP. P1-22 should validate that Firefox and Zen Browser expose the required URL information consistently.
+P1-06 is fully defined for the MVP. P1-22 validated the required URL information and
+tab-update behavior in Firefox and Zen Browser.
 
 ---
 
 ## P1-07 — Firefox profiles, containers, and private windows
 
-**Status:** Partially resolved; containers require validation  
+**Status:** Resolved with documented limitations
 **Category:** Browser behavior  
 **Priority:** Medium
 
@@ -176,18 +181,22 @@ Define the supported Firefox contexts and what happens when the extension is una
 - The MVP integrates with one configured browser profile only.
 - Firefox and Zen Browser are the two explicit MVP browser targets.
 - Private windows are unsupported and may bypass website restrictions in the MVP. The UI and setup documentation must disclose this limitation clearly.
-- Support for Firefox containers is not yet defined and must be checked in P1-22.
-- Additional profiles are not monitored. Whether an unmonitored profile can remain open when a session starts depends on what Niri can identify and is deferred to P1-09/P1-10.
+- Container tabs are part of the one configured profile. The MVP observes their
+  `cookieStoreId` but does not request the `cookies` permission or implement per-container
+  whitelist policy.
+- Additional profiles are not monitored and remain unblocked in the MVP. They are a disclosed bypass under P1-10.
 
 ### Validation note
 
-Firefox and Zen Browser may use separate profile and native-messaging configuration locations. P1-22 must determine whether the MVP can connect one configured profile in either browser or one profile in each browser simultaneously.
+Firefox and Zen Browser may use separate profile and native-messaging configuration locations.
+P1-22 validated the core connection in one configured profile per browser; target-package
+installation still needs to verify Zen's final manifest location.
 
 ---
 
 ## P1-08 — Firefox extension disconnection or disablement
 
-**Status:** Resolved; detection mechanics require validation in P1-22  
+**Status:** Resolved and validated by P1-22
 **Category:** Failure handling  
 **Priority:** Critical
 
@@ -205,14 +214,15 @@ Define behavior when the extension is disconnected, disabled, or loses permissio
 
 ### Validation notes
 
-- P1-22 should determine whether a persistent native-messaging connection can report failure immediately in addition to the one-minute heartbeat.
+- P1-22 confirmed that a persistent native-messaging disconnect is observable immediately
+  through the extension port, in addition to the one-minute heartbeat requirement.
 - If the desktop app itself crashes, it cannot write the finish reason at the moment of failure. On the next launch, recovery logic must recognize the abandoned active session, record `extension_or_app_crash`, and ensure restrictions are off. This behavior also belongs to P1-12.
 
 ---
 
 ## P1-09 — Pre-session application validation
 
-**Status:** Mostly resolved; unknown app-ID presentation requires P1-10  
+**Status:** Resolved for MVP with documented identity limitations
 **Category:** Session entry  
 **Priority:** Critical
 
@@ -230,31 +240,31 @@ Define the complete process for detecting and resolving existing non-whitelisted
 8. Enable desktop **Do Not Disturb** through Noctalia when the session starts so background apps cannot distract through notifications.
 9. Restore the user's previous Noctalia Do Not Disturb state whenever the session ends or fails.
 
-How unknown or missing app IDs are identified and displayed is deferred with P1-10. Noctalia integration must be validated in P1-21.
+Windows with a missing or unknown app ID are labeled **Unidentified app — allowed in MVP** and do not block session entry. This is a disclosed enforcement limitation from P1-10. P1-21 validated Noctalia state reading, enabling, disabling, and restoration.
 
 ---
 
 ## P1-10 — Application identity and implicit allowances
 
-**Status:** Deferred to a dedicated discussion  
+**Status:** Resolved for MVP with documented bypasses; system-component policy is tentative
 **Category:** Application rules  
 **Priority:** Critical
 
-This topic is too broad to define alongside the current issue batch. It requires a separate design discussion before application restriction can be implemented.
+### MVP resolution
 
-### Dedicated discussion scope
+- Use Niri's Wayland `app_id` as the application whitelist identity. Each distinct app ID is treated as a distinct identity.
+- A window with a missing or unknown app ID is unblockable and therefore allowed. Display it as **Unidentified app — allowed in MVP** so the limitation is visible.
+- Do not inspect processes running inside a terminal. Terminal-hosted commands are ignored and treated as safe. The terminal window itself is still classified using the terminal emulator's Wayland app ID.
+- Keep the focus app permanently present in the implicit whitelist. The user cannot remove this entry.
+- Allow system components implicitly in the MVP. The exact built-in system-component list is tentative and should be assembled from the target NixOS/Niri environment during implementation.
+- Allow unmonitored Firefox and Zen Browser profiles. Because they may share the browser's Wayland app ID but lack the paired extension connection, they are a documented website-restriction bypass in the MVP.
+- Progressive web apps and apps exposing multiple IDs receive no special grouping in the MVP; each Niri-reported app ID follows the ordinary rule.
 
-- Whether Wayland `app_id` is sufficient as the MVP identity
-- Apps that expose multiple app IDs
-- Terminal-hosted applications
-- Progressive web apps
-- Unknown or missing app IDs
-- System dialogs, portals, security tools, and recovery tools that must always remain allowed
-- Preventing the focus app from blocking itself
+### Known limitations
 
-### Resolution
-
-_No behavior is decided yet. Revisit P1-10 separately before finalizing P1-09, P1-15, P1-21, and application acceptance criteria._
+- Missing/unknown app IDs, terminal-hosted commands, private browser windows, and unmonitored browser profiles can bypass restrictions.
+- The policy for identifying which known app IDs qualify as system components is not final. Revisit it after collecting the actual NixOS/Niri window inventory.
+- These trade-offs are accepted for Standard mode and must be disclosed in setup or integration-health documentation. Stronger identity and process enforcement is deferred.
 
 ---
 
@@ -295,7 +305,11 @@ Define behavior across suspend, clock changes, crashes, restarts, logout, and sh
 - Store the session as interrupted. Use `finish_reason: "extension_or_app_crash"` for application or integration crashes. A later data-model pass may define more specific interruption codes for suspend, shutdown, or clock changes.
 - Do not automatically resume restrictions or the timer after application or system restart.
 - On the next launch, detect any abandoned active-session record, mark it interrupted, and ensure restrictions plus Do Not Disturb are off before allowing another session.
-- Restrictions should be cleaned up before planned shutdown or app exit where possible. Because a hard crash cannot run cleanup code, P1-21 and P1-22 must validate fail-safe cleanup/recovery behavior.
+- Restrictions should be cleaned up before planned shutdown or app exit where possible. P1-21
+  validated Noctalia cleanup for planned failure and startup-recovery simulations, and P1-22
+  validated browser-tab restoration after native stop and disconnect. Because a hard crash
+  cannot run cleanup code, complete cross-component recovery still requires implementation-level
+  testing.
 
 ---
 
@@ -321,7 +335,7 @@ Music remains independently controllable in all three states.
 
 ## P1-14 — First-launch and integration setup flow
 
-**Status:** Mostly resolved; Settings re-entry remains to be confirmed  
+**Status:** Resolved
 **Category:** User flow  
 **Priority:** High
 
@@ -336,21 +350,23 @@ Music remains independently controllable in all three states.
 7. Offer local music setup, but allow the user to skip files and folders and use the app without music.
 8. Enter the Focus Room.
 
-The exact deterministic extension packaging/configuration mechanism must be validated in P1-22. Whether the complete setup wizard can be rerun from Settings remains open.
+P1-22 defined deterministic native-host packaging through
+`programs.firefox.nativeMessagingHosts.packages`. The extension itself remains a separate
+signed XPI/AMO installable. The complete setup wizard can be rerun from Settings.
 
 ---
 
 ## P1-15 — Start-session flow
 
-**Status:** Mostly resolved; required fields remain to be specified  
+**Status:** Resolved
 **Category:** User flow  
 **Priority:** Critical
 
 ### Resolution
 
-1. Choose a timer duration.
-2. Enter a session intention if desired.
-3. Select a playlist if desired.
+1. Choose a timer duration; this is the only required session input.
+2. Enter an optional session intention.
+3. Select an optional playlist.
 4. Verify Firefox-extension, Niri, and Noctalia integration health.
 5. Scan all Niri windows.
 6. If validation fails, show blocked apps and whitelist information; otherwise do not require a whitelist review.
@@ -363,7 +379,7 @@ The exact deterministic extension packaging/configuration mechanism must be vali
 
 There is no transactional rollback mechanism during startup. The implementation must still report partial startup failure clearly and stop the attempted session using the P1-11 cleanup policy rather than claiming that it began successfully.
 
-Whether duration is the only required input, and whether intention is optional, should be confirmed in the timer UI/data-model discussion.
+Duration is required. Intention and playlist are optional.
 
 ---
 
@@ -393,7 +409,7 @@ Whether duration is the only required input, and whether intention is optional, 
 
 ## P1-17 — Session completion flow
 
-**Status:** Mostly resolved; notification behavior remains open  
+**Status:** Resolved
 **Category:** User flow  
 **Priority:** High
 
@@ -404,19 +420,20 @@ Whether duration is the only required input, and whether intention is optional, 
 3. Restore the previous Noctalia Do Not Disturb state.
 4. Restore redirected tabs to their original URLs according to P1-05.
 5. Fade out and stop the music.
-6. Display a summary containing:
+6. Send a desktop notification that the session ended.
+7. Display a summary containing:
    - Total deep-work time
    - Number of blocked distraction attempts
    - Finish reason
-7. Return to the idle Focus Room after the summary.
+8. Return to the idle Focus Room after the summary.
 
-The MVP does not offer an automatic break because breaks are outside the session model. Whether to also send a desktop notification remains open.
+The MVP does not offer an automatic break because breaks are outside the session model.
 
 ---
 
 ## P1-18 — Whitelist management flow
 
-**Status:** Mostly resolved; validation UX remains open  
+**Status:** Resolved
 **Category:** User flow  
 **Priority:** High
 
@@ -427,14 +444,15 @@ The MVP does not offer an automatic break because breaks are outside the session
 - The MVP has one shared application-and-website whitelist; reusable whitelist profiles are deferred.
 - Users can run a whitelist test without beginning a real focus session.
 - Whitelist editing is unavailable during active and paused sessions, per P1-03.
-
-How malformed domains, paths, IP addresses, and unknown app IDs are displayed remains to be designed alongside P1-06 and P1-10.
+- Strictly reject malformed website domains, paths, IP addresses, and manually entered app IDs. Invalid input is not saved, does not become a whitelist member, and has no effect on active rules.
+- Show a clear validation error and retain the entered value so the user can correct or cancel it. Do not silently accept a partial value.
+- Unknown or missing app IDs detected from existing windows are shown as **Unidentified app — allowed in MVP** per P1-10, but cannot be added as malformed whitelist entries.
 
 ---
 
 ## P1-19 — Local music import and library behavior
 
-**Status:** Mostly resolved; metadata and ordering remain open  
+**Status:** Resolved for MVP
 **Category:** Local playlist  
 **Priority:** Medium
 
@@ -443,19 +461,21 @@ How malformed domains, paths, IP addresses, and unknown app IDs are displayed re
 - Users can import individual files and folders.
 - MP3 is the only audio format required for the MVP.
 - A playlist is a live reference to a local music folder rather than an independent copied catalog.
-- When a file in an imported folder is added, moved, renamed, or deleted, the playlist content changes to reflect the folder.
+- When a file in an imported folder is added, moved, renamed, or deleted, the playlist content changes to reflect the folder. The MVP rescans recursively and sorts tracks by normalized relative path.
 - Individually imported files remain direct file references; a missing file becomes unavailable rather than being copied into app storage.
 - The playback queue persists across application restarts.
 - Shuffle and repeat are not included in the MVP.
 - Music setup and playback are optional.
 
-Whether title/artist metadata comes from MP3 tags or filenames, how folders are rescanned, and how queue order reacts to changed files remain open for P1-23.
+ID3 title, artist, and album tags take precedence. When tags are absent, `Artist - Title.mp3` supplies artist and title; otherwise the filename stem is the title.
+The persisted queue retains entries whose paths still exist, removes deleted paths, and appends newly discovered paths in lexical order. A move or rename is a new path and is treated as remove-plus-add rather than guessed identity matching.
+Full evidence and the implementation handoff are recorded in [`p1-23-local-audio-spike/README.md`](p1-23-local-audio-spike/README.md).
 
 ---
 
 ## P1-20 — Low-fidelity wireframes
 
-**Status:** Open  
+**Status:** Draft complete; pending product review
 **Category:** UX design  
 **Priority:** High
 
@@ -463,26 +483,435 @@ Create implementation-neutral wireframes focused on information hierarchy and be
 
 ### Required states
 
-- [ ] First-run setup
-- [ ] Focus Room — idle
-- [ ] Pre-session validation
-- [ ] Pre-session blocked-app list
-- [ ] Focus Room — active
-- [ ] Blocked website page
-- [ ] Session completion
-- [ ] Sound Library
-- [ ] Whitelist management
-- [ ] Settings and integration health
+- [x] First-run setup
+- [x] Focus Room — idle
+- [x] Pre-session validation
+- [x] Pre-session blocked-app list
+- [x] Focus Room — active
+- [x] Blocked website page
+- [x] Session completion
+- [x] Sound Library
+- [x] Whitelist management
+- [x] Settings and integration health
 
 ### Resolution
 
-_To be completed after the related behavior issues are resolved._
+The following implementation-neutral wireframes define the information hierarchy and
+primary behavior for the MVP. They are deliberately textual: spacing, typography,
+icons, and component technology remain implementation decisions.
+
+#### Shared shell and interaction rules
+
+The desktop app uses one quiet shell for all non-browser screens:
+
+```text
++--------------------------------------------------------------------------------+
+| Deep Work Focus                                      [status] [Settings]        |
++----------------------+---------------------------------------------------------+
+| Focus Room           |                                                         |
+| Sound Library        |                     page content                        |
+| Whitelist            |                                                         |
+| Session History      |                                                         |
++----------------------+---------------------------------------------------------+
+| [integration summary]                                      [Help / Recovery]   |
++--------------------------------------------------------------------------------+
+```
+
+- The left navigation is available only when no session is active. During Working
+  and Paused states, the Focus Room is the only primary destination; Settings and
+  whitelist editing are unavailable.
+- The top status is concise and redundant with the page's main state: **Ready**,
+  **Working**, **Paused**, or **Attention needed**. It is not the only place where
+  a failure is shown.
+- Every page has one visually dominant primary action and a low-emphasis way to
+  go back or cancel.
+- Destructive or session-ending actions require confirmation. Closing an existing
+  blocked application is never represented as a force-quit action.
+- Focus indicators, labels, and validation messages must not depend on color alone.
+  All controls need keyboard focus, visible names, and an accessible status update.
+
+#### 1. First-run setup
+
+The setup wizard is a linear flow with a visible step indicator. The user may skip
+music, but cannot finish until required desktop and browser integrations are healthy.
+
+```text
++--------------------------------------------------------------------------------+
+| Set up Deep Work Focus                                      Step 1 of 5          |
+| [Integrations] -- [Browser] -- [Whitelist] -- [Music] -- [Ready]               |
++--------------------------------------------------------------------------------+
+|                                                                                |
+| Protect your focus on this computer                                            |
+|                                                                                |
+| Deep Work Focus uses Niri, Noctalia, and one Firefox-based browser profile.    |
+| Restrictions are local and work without an internet connection.                |
+|                                                                                |
+| [✓] Niri / Wayland                 Connected                                  |
+| [✓] Noctalia notifications          Available                                  |
+| [!] Browser extension               Needs connection                           |
+|                                                                                |
+| Known MVP limits: private windows, other browser profiles, and some            |
+| unidentified or terminal-hosted applications may bypass restrictions.          |
+|                                                                                |
+| [Run integration check]                                      [Continue →]      |
++--------------------------------------------------------------------------------+
+```
+
+Wizard states:
+
+- **Integrations:** Check Niri IPC and Noctalia Do Not Disturb support. A failed
+  check explains the repair action and keeps **Continue** disabled.
+- **Browser:** Choose Firefox or Zen Browser, install/enable the extension, pair
+  exactly one profile, and run a connection test. Show the connected profile as
+  a human-readable label without exposing the pairing token.
+- **Whitelist:** Add at least any required application IDs or website rules. The
+  same validation rules as Whitelist Management apply; invalid values remain in
+  their fields and are not saved.
+- **Music:** Import MP3 files or live folders, or choose **Skip music**. Skipping
+  is explicit but reversible from Sound Library.
+- **Ready:** Summarize integration health and limitations, then offer **Open Focus
+  Room**. The wizard can be rerun later from Settings.
+
+#### 2. Focus Room — idle / Not working
+
+This is the default landing screen and the destination after a session summary.
+
+```text
++--------------------------------------------------------------------------------+
+| Focus Room                                                [Ready]              |
++--------------------------------------------------------------------------------+
+|                                                                                |
+|                         Not working                                            |
+|                                                                                |
+|                         00:00                                                  |
+|                                                                                |
+|  Duration *       [ 45 min v ]       Intention     [What will you focus on? ]  |
+|  Playlist         [ No music      v ]                                            |
+|                                                                                |
+|                         [ Start focus session ]                                |
+|                                                                                |
+|  Focus Shield     Ready   Apps: 8 allowed   Websites: 5 allowed                |
+|  Browser profile  Firefox — Connected       DND: Off (restored after session)  |
+|                                                                                |
+|  Recent focus     Today 0h 00m · 0 sessions                  [View history]     |
++--------------------------------------------------------------------------------+
+```
+
+- Duration is the only required input. The start action is disabled until it is a
+  valid positive duration and required integrations are ready.
+- Intention, playlist, and music are optional. A missing or unavailable track is
+  shown as unavailable and does not make a music-free session impossible.
+- Selecting **Start focus session** opens Pre-session validation. If validation
+  succeeds, the app applies restrictions and starts without an extra review page.
+- If an integration is unhealthy, replace the start action with **Fix integrations**
+  and link to the relevant Settings health detail.
+
+#### 3. Pre-session validation
+
+Validation is a short, blocking gate between the idle room and an active session.
+
+```text
++--------------------------------------------------------------------------------+
+| Check before starting                                      [Cancel]             |
++--------------------------------------------------------------------------------+
+| Focus plan: 45 min · "Write project brief" · No music                         |
+|                                                                                |
+| [✓] Firefox extension       Connected and healthy                              |
+| [✓] Niri                    Connected · 8 windows found                        |
+| [✓] Noctalia DND            Ready to preserve and restore current state        |
+| [!] Open application check  2 windows need attention                          |
+|                                                                                |
+| [Review blocked applications]                             [Run checks again]   |
++--------------------------------------------------------------------------------+
+```
+
+- Show progress while each check runs; do not imply that protection is active yet.
+- A successful check changes the primary action to **Start session**. The app then
+  enables browser restrictions, records the prior DND state, enables DND, starts
+  application monitoring, and starts the timer.
+- Any startup failure shows the failed component and the cleanup result. The app
+  returns to Not working and never presents the session as started.
+- The check can find windows on any Niri-reported workspace, including hidden or
+  scratchpad windows where they are reported.
+
+#### 4. Pre-session blocked-app list
+
+This screen is shown only when validation finds identified, non-whitelisted windows.
+
+```text
++--------------------------------------------------------------------------------+
+| Close these applications before starting                    2 windows         |
+| The Focus Shield cannot start while these windows are open.                    |
++--------------------------------------------------------------------------------+
+| Application                    Windows       Identity / reason                 |
+| [icon] Steam                    1             app_id: steam                     |
+| [icon] Chat client              1             app_id: example.chat              |
+|                                                                                |
+| [Select row]  [Add to whitelist]  [Open whitelist]                              |
+|                                                                                |
+| Unknown identity windows are allowed in the MVP and are labeled                 |
+| "Unidentified app — allowed in MVP". Terminal-hosted commands are not listed.  |
+|                                                                                |
+| [Refresh window list]                                      [Back to checks]     |
++--------------------------------------------------------------------------------+
+```
+
+- List each detected window or a grouped app identity with a window count. The
+  detail view must make it possible to distinguish multiple windows of one app.
+- **Add to whitelist** is available for a valid detected app ID. It does not close
+  the window; the user must refresh and confirm the resulting state.
+- **Refresh window list** is the only automatic recheck. Session start stays
+  disabled until every identified non-whitelisted window is gone or whitelisted.
+- A close affordance may request a cooperative Niri close, but the UI must explain
+  that unsaved-work prompts can leave the window open and require manual closure.
+- The list is not shown for a clean validation result. Missing or unknown app IDs
+  appear as an informational limitation, not a blocking error.
+
+#### 5. Focus Room — active / Working and Paused
+
+The active room keeps the timer and the current intention dominant. Restriction
+health is always visible, but detailed diagnostics remain secondary.
+
+```text
++--------------------------------------------------------------------------------+
+| Focus Room                                  [Working] [Shield active]            |
++--------------------------------------------------------------------------------+
+|                                                                                |
+|                         37:42                                                  |
+|                  Writing the project brief                                     |
+|                                                                                |
+|                    [ Pause ]        [ End session ]                            |
+|                                                                                |
+|  Sound                                                                       |
+|  [previous]  Deep Focus.mp3                         [pause] [next] [volume]    |
+|  Queue: 3 tracks · shuffle/repeat unavailable in MVP                           |
+|                                                                                |
+|  Focus Shield                                                                  |
+|  [✓] Websites restricted     [✓] Applications monitored     [✓] DND enabled    |
+|  Blocked attempts: 2                                                           |
+|                                                                                |
+|  [!] A blocked application was closed. View details                            |
++--------------------------------------------------------------------------------+
+```
+
+- In Working, the primary control is **Pause**. In Paused, the timer area changes
+  to **Paused · 37:42 remaining** and the control becomes **Resume**.
+- Pausing stops the timer only. Keep the shield status explicitly **Restrictions
+  remain active while paused** near the Resume control.
+- **End session** opens a confirmation dialog with no required reason and no delay.
+  Confirmation immediately begins the normal cleanup flow.
+- A blocked app notice identifies the app and whether Niri closed it or manual
+  closure is still required. Keep the notice persistent while the window remains.
+- A component failure replaces the normal health row with an urgent, specific
+  failure message and states that the session has ended and restrictions are being
+  removed. Do not offer Resume.
+
+#### 6. Blocked website page
+
+This is rendered by the browser extension in place of a blocked HTTP(S) destination.
+
+```text
++--------------------------------------------------------------------------------+
+| Deep Work Focus — Website blocked                                             |
++--------------------------------------------------------------------------------+
+|                                                                                |
+|                              Focus Shield                                      |
+|                                                                                |
+|                 This website is outside your active whitelist.                 |
+|                 The page will be restored when your session ends.              |
+|                                                                                |
+|                 Destination: example.com / path                                |
+|                 Session remaining: 37:42                                       |
+|                                                                                |
+|                 [Return to previous page]                                      |
+|                                                                                |
+|                 Restrictions are active. No restore option is available        |
+|                 during this session.                                           |
++--------------------------------------------------------------------------------+
+```
+
+- Retain the original URL in extension state, not as a user-editable control.
+- The page must not provide a restore or bypass action while the session is active.
+  A normal browser back action should not reveal the blocked destination again.
+- **Return to previous page** navigates to a safe page such as the Focus Room or
+  browser new-tab page; it does not restore the blocked URL.
+- Use a clear domain/path summary without exposing query parameters unnecessarily.
+- When the session ends, the extension restores each surviving redirected tab to
+  its original URL. The blocked page itself does not need to offer that action.
+
+#### 7. Session completion
+
+Cleanup happens before the summary is shown. The summary is informational and has
+one clear way back to the idle room.
+
+```text
++--------------------------------------------------------------------------------+
+| Session complete                                                               |
++--------------------------------------------------------------------------------+
+|                                                                                |
+|                         Deep work complete                                     |
+|                                                                                |
+|                         45:00                                                  |
+|                         Deep-work time                                         |
+|                                                                                |
+|  Blocked attempts       2                                                      |
+|  Finish reason          Completed                                              |
+|  Websites               Restored                                               |
+|  Applications            Restrictions removed                                  |
+|  Notifications          Previous Do Not Disturb state restored                 |
+|                                                                                |
+|                         [Back to Focus Room]                                   |
++--------------------------------------------------------------------------------+
+```
+
+- Finish reasons are human-readable: **Completed**, **Ended early**, **Interrupted**,
+  or **Extension/app crashed** as appropriate.
+- For an early end, show the actual deep-work time rather than the configured
+  duration. Do not ask for a reason.
+- If cleanup itself reports a problem, keep the summary visible and add a clear
+  recovery link; never claim that all restrictions were removed without confirmation.
+- Send the desktop notification when the session ends, before or alongside this
+  summary. The summary remains available even if notifications are disabled.
+
+#### 8. Sound Library
+
+The library separates source references, discovered tracks, and the persistent queue.
+
+```text
++--------------------------------------------------------------------------------+
+| Sound Library                                             [Focus Room]          |
++--------------------------------------------------------------------------------+
+| [Import MP3 files] [Import folder]                         Search [         ]   |
+|                                                                                |
+| Sources                                                                        |
+| [folder] Ambient / Music                         Live folder · 24 tracks       |
+| [file]   Single track.mp3                       Direct file · Available         |
+|                                                                                |
+| Tracks in Ambient / Music                                                        |
+| [ ] Artist — Track title.mp3                    04:12          [Add to queue]   |
+| [ ] Another track.mp3                           03:48          [Add to queue]   |
+| [!] Missing track.mp3                           Unavailable                    |
+|                                                                                |
+| Playback queue (saved locally)                                                 |
+| 1. Artist — Track title.mp3                         [remove]                    |
+| 2. Another track.mp3                                [remove]                    |
+|                                                                                |
+| MP3 only · folders rescan recursively · shuffle/repeat not in MVP              |
++--------------------------------------------------------------------------------+
+```
+
+- Import accepts individual MP3 files or folders. Non-MP3 files are ignored and
+  need not appear as errors.
+- Show ID3 title, artist, and album metadata when available; otherwise use the
+  documented filename fallback.
+- A folder source is live: refresh/rescan reflects additions and removals. Missing
+  direct-file references remain visible as unavailable rather than being copied.
+- Queue reconciliation is deterministic: retain existing paths, remove deleted
+  paths, and append newly discovered paths in normalized lexical order. A move or
+  rename is treated as remove-plus-add.
+- During a session, Sound Library is read-only. Compact playback controls remain
+  available in the active Focus Room, including volume and play/pause.
+
+#### 9. Whitelist management
+
+Use one shared whitelist screen with separate application and website sections.
+
+```text
++--------------------------------------------------------------------------------+
+| Whitelist                                                  [Test configuration] |
+| Changes apply to the next session.                                             |
++--------------------------------------------------------------------------------+
+| Applications                                                                  |
+| Allowed app IDs                                                                |
+| [Alacritty]                                                   [Remove]          |
+| [dev.zed.Zed]                                                 [Remove]          |
+|                                                                                |
+| [Choose detected window]  [Add app ID manually]                                |
+|                                                                                |
+| Websites                                                                       |
+| Allowed domains / paths                                                        |
+| [docs.google.com/docs]                                         [Remove]         |
+| [localhost]                                                    [Remove]         |
+| Add website [ example.com/path                         ] [Add]                  |
+|                                                                                |
+| [!] Enter a valid domain, IP address, or path. Nothing was saved.               |
+|                                                                                |
+| Implicitly allowed: focus app · MVP system components · local addresses        |
+| MVP limitations: private windows and unmonitored browser profiles may bypass.  |
+|                                                                                |
+| [Cancel changes]                                             [Save whitelist]  |
++--------------------------------------------------------------------------------+
+```
+
+- Whitelist edits are disabled in Working and Paused states. Replace save controls
+  with a read-only explanation and a link back to the active Focus Room.
+- Detected app selection should show the Niri `app_id` before adding it. Missing or
+  unknown IDs are informational and cannot be added as whitelist entries.
+- Website validation is atomic: malformed domains, paths, IP addresses, and app IDs
+  remain in the input, show an actionable error, and have no effect on saved rules.
+- Explain matching beside the website list: subdomains are included, paths use
+  prefix matching, ports are ignored, HTTP and HTTPS are equivalent, and local
+  addresses are allowed by default.
+- **Test configuration** runs the pre-session checks without starting a timed
+  session or changing restrictions. Its result uses the same validation and blocked
+  app list states.
+
+#### 10. Settings and integration health
+
+Settings is organized around recovery and configuration rather than frequent use.
+
+```text
++--------------------------------------------------------------------------------+
+| Settings                                                                       |
++--------------------------------------------------------------------------------+
+| Integration health                                                             |
+| [✓] Niri / Wayland                 Connected                 [Details]          |
+| [✓] Noctalia DND                   Available                 [Details]          |
+| [✓] Firefox extension              Paired · Firefox            [Reconnect]      |
+| [!] Audio output                   Waiting for device          [Details]       |
+|                                                                                |
+| Focus defaults                                                                 |
+| Default duration        [45 min v]                                             |
+| Color scheme            [Obsidian dark v]                                      |
+| Notifications            [✓] Session completion                               |
+|                                                                                |
+| Recovery and privacy                                                            |
+| [Run setup wizard again]   [Run complete integration test]                      |
+| [Open emergency recovery]                                                        |
+| Local-only data · no account or sign-in                                        |
+|                                                                                |
+| MVP limitations: one browser profile; private windows and some app identities  |
+| may bypass restrictions.                                                        |
++--------------------------------------------------------------------------------+
+```
+
+- Each **Details** view reports the current state, last successful check, and a
+  concrete repair action. A stale heartbeat or lost IPC is an error, not a warning
+  that can be ignored before starting.
+- Audio-device loss is a visible waiting/recovery state; it does not affect focus
+  restrictions. The user can continue without music or select another available
+  device when offered.
+- **Open emergency recovery** explains how to restore browser tabs, stop a failed
+  session, and return DND to its previous state. It must remain accessible from
+  the tools needed to recover the app safely.
+- Color-scheme selection is limited to built-in MVP schemes and persists locally.
+
+#### Wireframe decisions and deferred polish
+
+- The active session shows a compact blocked-attempt count and the latest notice,
+  not a scrolling activity feed; detailed history belongs in Session History.
+- Health is persistent but compact in normal operation and expands only when a
+  component needs attention.
+- Mobile layouts, full theme customization, automatic breaks, shuffle/repeat,
+  reusable whitelist profiles, and strict/gentle restriction-mode UI are deferred.
+- The next design pass should validate labels, keyboard order, error announcements,
+  and the exact visual density with a small interactive prototype.
 
 ---
 
 ## P1-21 — Niri feasibility spike
 
-**Status:** Open  
+**Status:** Resolved
 **Category:** Technical feasibility  
 **Priority:** Critical
 
@@ -490,47 +919,68 @@ Build a small disposable prototype to verify that Niri supports the required app
 
 ### Verify
 
-- [ ] Query all relevant open windows
-- [ ] Read stable Wayland app IDs
-- [ ] Detect newly created windows
-- [ ] Detect focus changes
-- [ ] Request that a window close safely
-- [ ] Determine whether focus can be prevented or reversed
-- [ ] Receive updates without excessive polling
-- [ ] Detect and report loss of Niri IPC
-- [ ] Read and change Noctalia Do Not Disturb state
-- [ ] Restore the prior Do Not Disturb state after completion, failure, and startup recovery
+- [x] Query all relevant open windows
+- [x] Read stable Wayland app IDs
+- [x] Detect newly created windows
+- [x] Detect focus changes
+- [x] Request that a window close safely
+- [x] Determine whether focus can be prevented or reversed
+- [x] Receive updates without excessive polling
+- [x] Detect and report loss of Niri IPC
+- [x] Read and change Noctalia Do Not Disturb state
+- [x] Restore the prior Do Not Disturb state after completion, failure, and startup recovery
 
 ### Deliverable
 
-Document tested IPC commands/events, observed limitations, and the recommended MVP enforcement behavior.
+Documented in [`P1-21_NIRI_VALIDATION.md`](P1-21_NIRI_VALIDATION.md), including tested IPC commands/events, measured close behavior, observed limitations, and the recommended MVP enforcement behavior. Niri provides focus reversal rather than focus prevention, and close requests remain cooperative when an application presents an unsaved-work confirmation.
+
+### Accepted implementation constraints
+
+- Maintain one persistent Niri event-stream connection rather than polling.
+- Deduplicate repeated window-change events.
+- Store the last allowed window ID for best-effort focus restoration.
+- Issue one targeted cooperative close request, then re-query the window inventory.
+- If the window remains, require manual closure rather than repeatedly closing or terminating its process.
+- Treat event-stream termination or IPC errors as restriction-component failures under P1-11.
+- Read and preserve Noctalia's prior Do Not Disturb state before enabling it.
 
 ---
 
 ## P1-22 — Firefox extension feasibility spike
 
-**Status:** Open  
+**Status:** Resolved for MVP feasibility; signed add-on publication remains a release step
 **Category:** Technical feasibility  
 **Priority:** Critical
 
-Build a small disposable extension and desktop communication prototype.
+Build a small disposable extension and desktop communication prototype. The spike is
+located in [`p1-22-firefox-spike/`](p1-22-firefox-spike/).
 
-### Verify
+### Verification checklist
 
-- [ ] Enumerate existing tabs
-- [ ] Observe or intercept navigation
-- [ ] Redirect non-whitelisted tabs
-- [ ] Preserve original URLs
-- [ ] Restore or expose a restoration action
-- [ ] Communicate with the Tauri desktop app
-- [ ] Detect extension disconnection
-- [ ] Work in Firefox
-- [ ] Work in Zen Browser
-- [ ] Install from Firefox Add-ons
-- [ ] Install/configure deterministically through NixOS system configuration
-- [ ] Connect exactly one configured profile
-- [ ] Confirm and document the private-window bypass
-- [ ] Determine container limitations
+- [x] Enumerate existing tabs, including URL, `incognito`, and `cookieStoreId`.
+- [x] Observe navigation through `tabs.onUpdated`.
+- [x] Redirect non-whitelisted HTTP(S) tabs to a blocked page.
+- [x] Preserve original URLs and restore surviving tabs when the session stops.
+- [x] Exercise a diagnostic restore action from the spike's blocked page. This control is test-only and must not ship in the MVP because restoring a blocked URL during an active session would bypass the restriction. Production restoration occurs only when the session ends.
+- [x] Exercise the native-messaging contract that a Tauri desktop app or helper must implement.
+- [x] Detect native-host disconnection and restore blocked tabs.
+- [x] Work in Firefox 154.0.
+- [x] Work in Zen Beta 1.21.15b for the core restriction/restore flow.
+- [ ] Install from Firefox Add-ons: not performed because this disposable extension is not
+      published or signed; temporary installation was validated.
+- [x] Define deterministic NixOS native-host packaging with
+      `programs.firefox.nativeMessagingHosts.packages`.
+- [x] Define one configured profile pairing: the extension persists a profile-specific
+      pairing token and sends it in `hello`; production desktop code must accept only the
+      paired token. The browser/native-host manifest alone cannot distinguish profiles.
+- [x] Confirm and document the private-window bypass. Firefox runtime validation passed;
+      Zen's Marionette implementation does not support the private-window automation
+      command used by the probe, so Zen private-window behavior needs a manual follow-up.
+- [x] Determine container limitations: tabs expose `cookieStoreId`, but creating a tab in a
+      container requires the `cookies` permission. The spike deliberately does not request
+      that permission, so its runtime probe fails with `No permission for cookieStoreId`.
+      Containers therefore share the one profile-wide connection and have no separate
+      whitelist policy in the MVP.
 
 ### Possible communication methods
 
@@ -539,13 +989,55 @@ Build a small disposable extension and desktop communication prototype.
 
 ### Deliverable
 
-Document the selected communication method, required permissions, limitations, and installation approach on NixOS.
+Native messaging is selected. The spike requests `tabs`, `webNavigation`, `nativeMessaging`,
+`storage`, and `contextualIdentities`; it intentionally does not request `cookies`. Before
+release, the production extension must review and remove any permission that its final
+implementation does not use. The native host uses Firefox's length-prefixed JSON stdio
+protocol. A Tauri desktop app can implement that host contract directly or delegate it to a
+helper; the Node host in this spike is only a protocol/runtime probe.
+
+NixOS packages the host and manifest with the Firefox native-messaging-host package option,
+while the extension remains a separate signed XPI/AMO installation. The disposable harness
+uses temporary Marionette installation and does not modify the user's browser profiles.
+
+### Validation results — 2026-08-26
+
+The Marionette harness ran two scenarios in each browser:
+
+| Browser | Start/stop | Native disconnect | Private-window probe |
+| --- | --- | --- | --- |
+| Firefox 154.0 | PASS | PASS | PASS: private URL remained unrestricted |
+| Zen Beta 1.21.15b | PASS | PASS | Not automated: Zen reports `openWindow() not supported` |
+
+In both browsers, an HTTP(S) tab was redirected to `blocked.html` with its original URL
+encoded in the query string, then restored on stop. The disconnect scenario restored the tab
+after the host exited. The `hello` message included the current tab inventory and profile
+pairing token; heartbeat acknowledgements and native-host framing were also observed.
+
+The container probe confirmed the permission boundary described above. This is a deliberate
+least-privilege result, not a failed MVP requirement: existing container tabs can be observed,
+but the MVP does not provide container-specific policy.
+
+### Accepted implementation constraints and release follow-ups
+
+- Use a persistent Firefox native-messaging connection and retain the one-minute heartbeat as a second health check.
+- Enforce the profile pairing token in production desktop code; the native-host manifest cannot identify a browser profile by itself.
+- On native disconnect, restore blocked tabs immediately and signal the desktop side to apply P1-08/P1-11 session cleanup.
+- Do not include the spike's manual **Restore** control in the production blocked page while a session is active.
+- Treat containers as ordinary tabs in the configured profile; do not add per-container whitelist behavior or request `cookies` for the MVP.
+- Keep private windows outside extension access and disclose them as an intentional MVP bypass.
+- Manually confirm the private-window bypass in the target Zen package because Zen's Marionette implementation could not automate that check.
+- Publish a signed XPI through Firefox Add-ons for release; temporary unsigned installation is development-only.
+- Package the native host through `programs.firefox.nativeMessagingHosts.packages` and verify the final native-host manifest location for the target Zen package.
+- Replace or port the disposable Node host with the production Tauri/native helper implementation.
+
+Full spike evidence and reproduction instructions are in [`p1-22-firefox-spike/README.md`](p1-22-firefox-spike/README.md).
 
 ---
 
 ## P1-23 — Local audio feasibility spike
 
-**Status:** Open  
+**Status:** Resolved for MVP feasibility; hardware device switching remains an implementation test
 **Category:** Technical feasibility  
 **Priority:** Medium
 
@@ -553,18 +1045,33 @@ Verify local audio behavior in the proposed Tauri stack.
 
 ### Verify
 
-- [ ] Select individual files
-- [ ] Select directories, if required by P1-19
-- [ ] Play MP3 files
-- [ ] Read basic MP3 track metadata and compare tag-versus-filename fallback behavior
-- [ ] Retain individual-file and folder references across restarts
-- [ ] Rescan live folder playlists after files are added, moved, renamed, or deleted
-- [ ] Persist the playback queue and define ordering when source files change
-- [ ] Handle output-device changes
+- [x] Select individual files
+- [x] Select directories, if required by P1-19
+- [x] Play MP3 files
+- [x] Read basic MP3 track metadata and compare tag-versus-filename fallback behavior
+- [x] Retain individual-file and folder references across restarts
+- [x] Rescan live folder playlists after files are added, moved, renamed, or deleted
+- [x] Persist the playback queue and define ordering when source files change
+- [x] Handle output-device changes through an explicit device-loss/recovery state contract; real hardware switching remains an implementation test
+
+### Validation results — 2026-08-26
+
+The disposable harness in [`p1-23-local-audio-spike/`](p1-23-local-audio-spike/) passed
+the file-selection, MP3 playback/decode, metadata, persistence, rescan, and queue tests.
+The output-device loss/recovery state contract also passed. A real output-device switch
+was not observable in this headless run because no PipeWire output device was available;
+that remains an implementation/release test.
 
 ### Deliverable
 
-Document supported formats, metadata behavior, storage approach, and known platform limitations.
+The MVP supports MP3 only. It stores direct file and live folder references plus the
+playback queue in local JSON/SQLite-equivalent application storage; audio is not copied
+into app storage. ID3 metadata is preferred with the documented filename fallback.
+Folder playlists are recursive and sorted by relative path. Missing individual files
+remain unavailable references. The production Tauri player must expose output-device
+loss as a health state and reselect the default/new device when one becomes available.
+Native playback was validated with the target machine's FFmpeg/VLC stack; Tauri WebView
+or Rust audio-crate integration still requires Phase 2 implementation testing.
 
 ---
 
@@ -578,21 +1085,31 @@ Finalize testable acceptance criteria after the behavior and feasibility issues 
 
 ### Initial draft
 
-- [ ] A session cannot start while a detected non-whitelisted app is open.
-- [ ] A session cannot start unless the Firefox extension is connected and healthy.
+- [ ] A session cannot start while a detected, identified, non-whitelisted app is open.
+- [ ] Missing or unknown app IDs are visibly labeled and allowed as an MVP limitation.
+- [ ] Terminal-hosted processes are ignored; the terminal window is classified by its Wayland app ID.
+- [ ] The focus app and MVP system components are implicitly allowed.
+- [ ] A session cannot start unless the paired Firefox extension is connected and healthy.
 - [ ] Visiting a non-whitelisted domain during a session displays the blocked experience.
 - [ ] Existing non-whitelisted tabs become inaccessible when a session starts.
 - [ ] Opening a non-whitelisted app during a session triggers the selected Standard-mode response.
 - [ ] Restrictions are removed when a session ends.
 - [ ] Restrictions remain active while the timer is paused.
 - [ ] The whitelist cannot be changed during an active or paused session.
+- [ ] Malformed whitelist input is rejected completely, never saved, and shown with a clear validation error.
 - [ ] Blocked tabs automatically return to their original URLs when a session ends.
 - [ ] Any restriction-component runtime failure ends the session and removes all restrictions.
 - [ ] Suspend, clock change, crash, logout, reboot, or shutdown ends and interrupts an active session rather than resuming it.
 - [ ] Only one desktop-app instance can run.
 - [ ] Session history remains entirely local and stores deep-work time, blocked-attempt count, and finish reason.
 - [ ] Noctalia Do Not Disturb is enabled during a session and its previous state is restored afterward.
+- [ ] Duration is required; session intention and music are optional.
+- [ ] Session completion sends a desktop notification.
+- [ ] The setup wizard can be rerun from Settings.
 - [ ] Local MP3 playback works without internet access and is optional.
+- [ ] ID3 metadata takes precedence, with `Artist - Title.mp3` and filename-stem fallbacks.
+- [ ] Live folder playlists rescan recursively and reconcile the queue deterministically after file changes.
+- [ ] Audio-device loss enters a visible waiting state and playback can recover onto an available device.
 - [ ] No account or sign-in is displayed or required.
 - [ ] The default UI is minimal and uses the Obsidian-inspired scheme.
 - [ ] The selected MVP color scheme persists between launches.
@@ -608,17 +1125,10 @@ _To be finalized._
 
 Resolve issues in this order to minimize rework:
 
-1. **P1-21:** Niri feasibility spike
-2. **P1-22:** Firefox extension feasibility spike
-3. **P1-01:** Blocked app behavior during a session
-4. **P1-06:** Website whitelist matching rules
-5. **P1-08:** Firefox extension failure behavior
-6. **P1-09:** Pre-session application validation
-7. **P1-10:** Application identity and implicit allowances
-8. **P1-11:** Restriction-system failure policy
-9. **P1-02–P1-05:** Remaining Standard-mode lifecycle decisions
-10. **P1-12–P1-13:** Timer and break lifecycle
-11. **P1-14–P1-19:** Complete user flows and feature details
-12. **P1-23:** Local audio feasibility spike
-13. **P1-20:** Low-fidelity wireframes
-14. **P1-24:** Final MVP acceptance criteria
+1. **P1-21:** Niri feasibility spike — completed
+2. **P1-22:** Firefox extension feasibility spike — completed
+3. **P1-01–P1-17:** Product behavior and primary flows — completed for MVP, except the implementation-level P1-12 recovery tests
+4. **P1-18:** Whitelist validation UX — completed
+5. **P1-19/P1-23:** Local audio details and feasibility — completed for MVP feasibility; hardware device switching remains an implementation test
+6. **P1-20:** Low-fidelity wireframes — open
+7. **P1-24:** Final MVP acceptance criteria — draft
