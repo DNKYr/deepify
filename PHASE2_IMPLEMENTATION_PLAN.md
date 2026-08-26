@@ -446,7 +446,7 @@ Document—but do not falsely mark complete—the release tests requiring real i
 ## P2-11 — Phase 2 acceptance and handoff
 
 **Priority:** Critical  
-**Status:** Pending — acceptance handoff cannot be marked complete until the blocked dependency and platform checks are resolved.
+**Status:** Blocked — acceptance handoff records the implemented prototype, but dependency/toolchain and required platform gates cannot run in this environment.
 
 ### Tasks
 
