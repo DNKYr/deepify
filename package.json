@@ -6,9 +6,9 @@
   "scripts": {
     "dev": "node apps/desktop/scripts/dev.mjs",
     "test": "node --test apps/desktop/test/*.mjs contracts/test/*.mjs",
-    "typecheck": "node apps/desktop/scripts/typecheck.mjs",
-    "lint": "node apps/desktop/scripts/lint.mjs",
-    "format:check": "node apps/desktop/scripts/format-check.mjs"
+    "typecheck": "npm --workspace @deepify/desktop run typecheck",
+    "lint": "npm --workspace @deepify/desktop run lint",
+    "format:check": "npm --workspace @deepify/desktop run format:check"
   },
   "engines": {"node": ">=20"}
 }
