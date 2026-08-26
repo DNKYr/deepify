@@ -288,7 +288,7 @@ A user can complete the entire approved session flow with mock integrations, clo
 ## P2-07 — Implement whitelist rules and management
 
 **Priority:** High  
-**Status:** In progress — domain validation and shared URL fixtures implemented; management command/UI wiring remains pending.
+**Status:** Completed for domain and shared-contract scope; management command/UI wiring remains pending.
 
 ### Application rules
 
@@ -332,7 +332,7 @@ Create `contracts/url-rule-cases.json` now. The same fixtures must later run in 
 ## P2-08 — Implement setup, Settings, and integration health
 
 **Priority:** High  
-**Status:** Pending — settings persistence primitives are present; five-step wizard and health screens remain pending.
+**Status:** In progress — settings persistence primitives and rerunnable setup state are present; five-step wizard and health screens remain pending.
 
 ### Tasks
 
@@ -358,7 +358,7 @@ Create `contracts/url-rule-cases.json` now. The same fixtures must later run in 
 ## P2-09 — Integrate production local MP3 support
 
 **Priority:** High  
-**Status:** In progress — MP3 filtering, recursive scan, metadata filename fallback, queue reconciliation, and output-device health contract implemented; production decoder/device adapter remains pending.
+**Status:** Completed for library/queue contract scope; production decoder/device adapter and ID3 parsing remain pending.
 
 ### Step 1: adapter selection spike
 

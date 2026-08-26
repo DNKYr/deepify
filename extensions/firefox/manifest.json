@@ -1,0 +1,10 @@
+{
+  "manifest_version": 2,
+  "name": "Deepify Focus Companion (Phase 2 simulation)",
+  "version": "0.1.0",
+  "description": "Protocol placeholder; website enforcement is deferred to Phase 3.",
+  "browser_specific_settings": { "gecko": { "id": "focus@deepify.local", "strict_min_version": "120.0" } },
+  "permissions": ["storage", "tabs", "webNavigation", "nativeMessaging"],
+  "background": { "scripts": ["background.js"] },
+  "browser_action": { "default_title": "Deepify" }
+}

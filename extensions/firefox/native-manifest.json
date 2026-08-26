@@ -1,0 +1,7 @@
+{
+  "name": "com.deepify.browser",
+  "description": "Deepify browser transport (Phase 3 installation)",
+  "path": "deepify-browser-native-host",
+  "type": "stdio",
+  "allowed_extensions": ["focus@deepify.local"]
+}

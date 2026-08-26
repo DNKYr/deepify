@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "cases": [
+    {"url":"https://example.com/docs","rules":["example.com/docs"],"allowed":true},
+    {"url":"http://docs.example.com/docs/page?x=1","rules":["example.com/docs"],"allowed":true},
+    {"url":"https://example.com/blog","rules":["example.com/docs"],"allowed":false},
+    {"url":"https://other.example.net/docs","rules":["example.com/docs"],"allowed":false},
+    {"url":"https://example.com:8443/docs","rules":["example.com/docs"],"allowed":true},
+    {"url":"http://localhost:3000/dev","rules":[],"allowed":true},
+    {"url":"http://127.0.0.1:8080","rules":[],"allowed":true},
+    {"url":"http://172.20.2.4","rules":[],"allowed":true},
+    {"url":"http://172.32.2.4","rules":[],"allowed":false},
+    {"url":"http://[::1]:8080","rules":[],"allowed":true},
+    {"url":"ftp://example.net/file","rules":[],"allowed":true}
+  ]
+}
