@@ -622,6 +622,21 @@ mod tests {
         assert!(s.current.is_none());
     }
     #[test]
+    fn cleanup_failure_is_reported_and_does_not_claim_success() {
+        let restriction = MockRestriction {
+            failure: MockFailure::Deactivate,
+            ..Default::default()
+        };
+        let mut service = SessionService::new(FakeClock::new(1), restriction);
+        service.start(10, None).unwrap();
+        assert_eq!(
+            service.finish(FinishReason::EndedEarly),
+            Err(SessionError::CleanupIncomplete)
+        );
+        assert!(!service.history[0].cleanup_complete);
+        assert_eq!(service.restriction.cleanup_attempts, 1);
+    }
+    #[test]
     fn malformed_whitelist_is_atomic() {
         let mut w = WhitelistService::default();
         assert!(w.add("bad value", false).is_err());

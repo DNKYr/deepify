@@ -210,7 +210,7 @@ Every milestone must leave the application runnable and tests passing.
 ## P2-05 — Add mock restriction and health adapters
 
 **Priority:** Critical  
-**Status:** In progress — mock restriction adapter and failure tests implemented; Tauri command/event wiring remains pending.
+**Status:** Completed for simulated adapter contract; Tauri command/event wiring and real integration remain Phase 3/4 work.
 
 ### Tasks
 
