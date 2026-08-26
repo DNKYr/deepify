@@ -59,7 +59,7 @@ Every milestone must leave the application runnable and tests passing.
 ## P2-01 — Resolve bootstrap identifiers and pin the toolchain
 
 **Priority:** Critical  
-**Status:** Ready for Codex implementation; initial naming inputs resolved
+**Status:** In progress — identifiers and source scaffold recorded; immutable lock validation blocked by truncated network fetch.
 
 ### Resolved inputs
 
@@ -95,7 +95,7 @@ Every milestone must leave the application runnable and tests passing.
 ## P2-02 — Create the Tauri/React production scaffold
 
 **Priority:** Critical  
-**Status:** Blocked by P2-01
+**Status:** In progress — Tauri configuration, React/Vite shell, semantic themes, and single-instance configuration recorded; Tauri dependency installation remains blocked by unavailable crates.io.
 
 ### Tasks
 
@@ -126,7 +126,7 @@ Every milestone must leave the application runnable and tests passing.
 ## P2-03 — Implement domain types and SQLite migrations
 
 **Priority:** Critical  
-**Status:** Blocked by P2-02
+**Status:** In progress — migration SQL, SQLite adapter boundary, domain DTOs, and repository tests recorded; rusqlite integration remains blocked by unavailable crates.io.
 
 ### Tasks
 
@@ -169,7 +169,7 @@ Every milestone must leave the application runnable and tests passing.
 ## P2-04 — Implement the backend session engine
 
 **Priority:** Critical  
-**Status:** Blocked by P2-03
+**Status:** Completed for deterministic domain scope; Tauri command persistence/event wiring remains pending and platform validation is not claimed.
 
 ### Tasks
 
@@ -210,7 +210,7 @@ Every milestone must leave the application runnable and tests passing.
 ## P2-05 — Add mock restriction and health adapters
 
 **Priority:** Critical  
-**Status:** Can begin after P2-03; integrates with P2-04
+**Status:** In progress — mock restriction adapter and failure tests implemented; Tauri command/event wiring remains pending.
 
 ### Tasks
 
@@ -241,7 +241,7 @@ Inject a failure at every startup and cleanup step and assert:
 ## P2-06 — Build the vertical Focus Room flow
 
 **Priority:** Critical  
-**Status:** Blocked by P2-04 and P2-05
+**Status:** In progress — Focus Room React shell and backend command/event boundary recorded; full Testing Library/Vitest flow remains pending dependency installation.
 
 ### Screens
 
@@ -288,7 +288,7 @@ A user can complete the entire approved session flow with mock integrations, clo
 ## P2-07 — Implement whitelist rules and management
 
 **Priority:** High  
-**Status:** Can begin after P2-03
+**Status:** In progress — domain validation and shared URL fixtures implemented; management command/UI wiring remains pending.
 
 ### Application rules
 
@@ -332,7 +332,7 @@ Create `contracts/url-rule-cases.json` now. The same fixtures must later run in 
 ## P2-08 — Implement setup, Settings, and integration health
 
 **Priority:** High  
-**Status:** Blocked by P2-05 and P2-07
+**Status:** Pending — settings persistence primitives are present; five-step wizard and health screens remain pending.
 
 ### Tasks
 
@@ -358,7 +358,7 @@ Create `contracts/url-rule-cases.json` now. The same fixtures must later run in 
 ## P2-09 — Integrate production local MP3 support
 
 **Priority:** High  
-**Status:** Can begin after P2-03; final integration after P2-06
+**Status:** In progress — MP3 filtering, recursive scan, metadata filename fallback, queue reconciliation, and output-device health contract implemented; production decoder/device adapter remains pending.
 
 ### Step 1: adapter selection spike
 
@@ -412,7 +412,7 @@ Select the smallest reliable implementation behind `AudioEngine`. Record the cho
 ## P2-10 — Recovery, robustness, and privacy pass
 
 **Priority:** Critical  
-**Status:** Blocked by the vertical flow and persistence
+**Status:** Pending — recovery tests exist for mock backend state; real crash/suspend/platform checks remain unperformed.
 
 ### Tasks
 
@@ -446,7 +446,7 @@ Document—but do not falsely mark complete—the release tests requiring real i
 ## P2-11 — Phase 2 acceptance and handoff
 
 **Priority:** Critical  
-**Status:** Blocked by all preceding Phase 2 work
+**Status:** Pending — acceptance handoff cannot be marked complete until the blocked dependency and platform checks are resolved.
 
 ### Tasks
 
@@ -570,3 +570,24 @@ P2-07 and the initial P2-09 adapter spike can proceed in parallel after the stor
 ## 8. Immediate Next Action
 
 Begin the Codex loop with P2-01. Incorporate its exact flake/toolchain validation and remaining identifier decisions before beginning P2-02. Do not scaffold Tauri until the reverse-DNS application identifier and native-host naming are chosen, because those values affect local data paths, desktop integration, browser manifests, and future upgrades.
+
+## Implementation evidence — 2026-08-26
+
+The following checks were run in the shared workspace:
+
+```text
+cargo fmt --all                         PASS
+cargo test --workspace --offline        PASS (14 backend tests)
+cargo clippy --workspace --all-targets --offline -- -D warnings  PASS
+npm test                                PASS (2 contract/UI source tests)
+npm run typecheck                       PASS (temporary source scan; real tsc awaits npm install)
+npm run lint                            PASS (temporary source scan; real ESLint awaits npm install)
+nix flake metadata ...                 BLOCKED: truncated tar archive while fetching nixpkgs
+cargo fetch                             BLOCKED: static.crates.io DNS unavailable
+npm install --package-lock-only        BLOCKED: registry unavailable; root lock has no resolved dependency graph
+```
+
+These results do not constitute Phase 2 completion. The Tauri shell, real
+rusqlite adapter, production MP3 decoder, Testing Library suite, Nix check,
+real platform enforcement, and crash/suspend/device validation remain pending.
+Restriction behavior is explicitly simulated throughout the prototype.
