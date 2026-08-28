@@ -83,6 +83,7 @@ test('P2-06 through P2-10 expose every prototype screen and production audio bou
     'Focus Room', 'Sound Library', 'Whitelist', 'Session History', 'Settings',
     'Simulated protection', 'Unidentified app — allowed in MVP',
     'Restrictions remain active while paused', 'Blocked attempts', 'Skip music',
+    'Default duration', 'Rerun simulated health checks',
   ]) assert.match(allUi, new RegExp(label, 'i'), `missing required UI state: ${label}`);
 
   const cargo = await read('apps/desktop/src-tauri/Cargo.toml');
@@ -90,7 +91,7 @@ test('P2-06 through P2-10 expose every prototype screen and production audio bou
   assert.match(cargo, /id3\s*=/, 'ID3 metadata library must be selected');
   assert.match(cargo, /notify\s*=/, 'live folder watcher must be selected');
   const runtime = await read('apps/desktop/src-tauri/src/main.rs');
-  for (const command of ['audio_toggle', 'audio_previous', 'audio_next', 'audio_set_volume']) {
+  for (const command of ['audio_toggle', 'audio_previous', 'audio_next', 'audio_set_volume', 'repair_integrations']) {
     assert.match(runtime, new RegExp(command), `missing production audio command: ${command}`);
   }
   const architecture = await read('ARCHITECTURE.md');

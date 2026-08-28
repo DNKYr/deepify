@@ -31,9 +31,11 @@
               hash = "sha256-dG6ZMDpKMc7MMsNSpncJmCoF1L3SboP1j7ZJhV2KE4Y=";
             };
             nativeBuildInputs = with pkgs; [
+              clippy
               nodejs_24
               npmHooks.npmConfigHook
               pkg-config
+              rustfmt
             ];
             buildInputs = linuxLibraries;
             preBuild = "npm run build";
@@ -47,6 +49,14 @@
               "--features"
               "deepify-desktop/custom-protocol"
             ];
+            preCheck = ''
+              npm test
+              npm run typecheck
+              npm run lint
+              npm run format:check
+              cargo fmt --all -- --check
+              cargo clippy --workspace --all-targets --features deepify-desktop/custom-protocol -- -D warnings
+            '';
           };
         });
       devShells = eachSystem (pkgs: {
