@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Deepify — Website blocked</title>
+    <link rel="stylesheet" href="blocked.css" />
+  </head>
+  <body>
+    <header><strong>DEEPIFY</strong><span>Website blocked</span></header>
+    <main aria-labelledby="blocked-title">
+      <p class="eyebrow">FOCUS SHIELD</p>
+      <h1 id="blocked-title">This website is outside your active whitelist.</h1>
+      <p>The page will be restored when your session ends.</p>
+      <dl>
+        <dt>Destination</dt>
+        <dd id="destination">example.com / path</dd>
+        <dt>Session remaining</dt>
+        <dd id="remaining">37:42</dd>
+      </dl>
+      <button id="new-tab" type="button">Open a new tab</button>
+      <p class="notice">
+        Restrictions are active. No restore option is available during this
+        session.
+      </p>
+      <p class="simulation">
+        Preview only — website protection is simulated in Phase 2.
+      </p>
+    </main>
+    <script src="blocked.js"></script>
+  </body>
+</html>

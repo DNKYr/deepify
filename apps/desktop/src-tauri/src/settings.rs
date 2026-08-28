@@ -20,7 +20,7 @@ impl<'a> SettingsService<'a> {
         if matches!(theme, "obsidian" | "mist") {
             self.db.set_setting("theme", theme)
         } else {
-            Err(StorageError::Sqlite("unsupported theme".into()))
+            Err(StorageError::InvalidValue("unsupported theme".into()))
         }
     }
     pub fn setup_complete(&self) -> Result<bool, StorageError> {

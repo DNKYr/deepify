@@ -4,8 +4,9 @@
   "version": "0.1.0",
   "workspaces": ["apps/desktop"],
   "scripts": {
-    "dev": "node apps/desktop/scripts/dev.mjs",
-    "test": "node --test apps/desktop/test/*.mjs contracts/test/*.mjs",
+    "dev": "tauri dev --config apps/desktop/src-tauri/tauri.conf.json",
+    "test": "npm --workspace @deepify/desktop run test && node --test contracts/test/*.mjs tests/*.test.mjs",
+    "build": "npm --workspace @deepify/desktop run build",
     "typecheck": "npm --workspace @deepify/desktop run typecheck",
     "lint": "npm --workspace @deepify/desktop run lint",
     "format:check": "npm --workspace @deepify/desktop run format:check"

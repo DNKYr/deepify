@@ -139,90 +139,70 @@ pub mod domain {
                 message: "Enter a host and optional path, without query or credentials".into(),
             });
         }
-        let without_scheme = raw
-            .strip_prefix("http://")
-            .or_else(|| raw.strip_prefix("https://"))
-            .unwrap_or(raw);
-        if without_scheme.contains("://") {
+        if raw.contains("://") && !raw.starts_with("http://") && !raw.starts_with("https://") {
             return Err(ValidationError {
                 field: "website",
                 message: "Only HTTP(S) website rules are supported".into(),
             });
         }
-        let (authority, path) = without_scheme
-            .split_once('/')
-            .map_or((without_scheme, "/"), |(h, _p)| {
-                (h, &without_scheme[h.len()..])
-            });
-        let host = authority
-            .trim_matches(['[', ']'])
+        let candidate = if raw.starts_with("http://") || raw.starts_with("https://") {
+            raw.to_string()
+        } else if raw.parse::<std::net::IpAddr>().is_ok() {
+            format!("http://[{raw}]")
+        } else {
+            format!("http://{raw}")
+        };
+        let parsed = url::Url::parse(&candidate).map_err(|_| ValidationError {
+            field: "website",
+            message: "Enter a valid host name or IP address".into(),
+        })?;
+        let host = parsed
+            .host_str()
+            .unwrap_or_default()
+            .trim_start_matches('[')
+            .trim_end_matches(']')
             .trim_end_matches('.')
             .to_ascii_lowercase();
-        if host.is_empty()
-            || host.chars().any(|c| c.is_whitespace() || c == '_')
-            || (!is_ip(host.as_str()) && host.contains(':'))
-        {
+        if host.is_empty() || !valid_host(&host) {
             return Err(ValidationError {
                 field: "website",
                 message: "Enter a valid host name or IP address".into(),
             });
         }
-        let path = if path.is_empty() { "/" } else { path };
-        if !path.starts_with('/') {
-            return Err(ValidationError {
-                field: "website",
-                message: "Path must begin with /".into(),
-            });
-        }
-        Ok((host, path.to_string()))
+        Ok((host, parsed.path().to_string()))
     }
 
-    fn is_ip(host: &str) -> bool {
-        host.parse::<std::net::Ipv4Addr>().is_ok() || host.parse::<std::net::Ipv6Addr>().is_ok()
+    fn valid_host(host: &str) -> bool {
+        if host.parse::<std::net::IpAddr>().is_ok() {
+            return true;
+        }
+        host.len() <= 253
+            && host.split('.').all(|label| {
+                !label.is_empty()
+                    && label.len() <= 63
+                    && !label.starts_with('-')
+                    && !label.ends_with('-')
+                    && label
+                        .chars()
+                        .all(|character| character.is_ascii_alphanumeric() || character == '-')
+            })
     }
 
     pub fn website_allowed(url: &str, rules: &[WhitelistEntry]) -> bool {
-        let Some((scheme, remainder)) = url.split_once("://") else {
-            return true;
+        let Ok(parsed) = url::Url::parse(url) else {
+            return !url.to_ascii_lowercase().starts_with("http");
         };
-        if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+        if parsed.scheme() != "http" && parsed.scheme() != "https" {
             return true;
         }
-        let authority_end = remainder.find('/').unwrap_or(remainder.len());
-        let authority = &remainder[..authority_end];
-        let path = &remainder[authority_end..];
-        let host_port = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
-        let host = if host_port.starts_with('[') {
-            host_port
-                .split(']')
-                .next()
-                .unwrap_or(host_port)
-                .trim_start_matches('[')
+        let Some(host) = parsed.host_str().map(|host| {
+            host.trim_start_matches('[')
+                .trim_end_matches(']')
                 .to_ascii_lowercase()
-        } else {
-            host_port
-                .rsplit_once(':')
-                .map_or(host_port, |(h, p)| {
-                    if p.parse::<u16>().is_ok() {
-                        h
-                    } else {
-                        host_port
-                    }
-                })
-                .to_ascii_lowercase()
+        }) else {
+            return false;
         };
-        let local_172 = host
-            .strip_prefix("172.")
-            .and_then(|n| n.split('.').next())
-            .and_then(|n| n.parse::<u8>().ok())
-            .is_some_and(|n| (16..=31).contains(&n));
-        if host == "localhost"
-            || host == "127.0.0.1"
-            || host == "::1"
-            || host.starts_with("192.168.")
-            || host.starts_with("10.")
-            || local_172
-        {
+        if host == "localhost" || host.parse::<std::net::IpAddr>().is_ok_and(is_local_ip) {
             return true;
         }
         rules
@@ -236,8 +216,21 @@ pub mod domain {
             })
             .any(|(rule_host, rule_path)| {
                 (host == *rule_host || host.ends_with(&format!(".{rule_host}")))
-                    && path.starts_with(rule_path)
+                    && parsed.path().starts_with(rule_path)
             })
+    }
+
+    fn is_local_ip(ip: std::net::IpAddr) -> bool {
+        match ip {
+            std::net::IpAddr::V4(address) => {
+                address.is_private() || address.is_loopback() || address.is_link_local()
+            }
+            std::net::IpAddr::V6(address) => {
+                address.is_loopback()
+                    || address.is_unique_local()
+                    || address.is_unicast_link_local()
+            }
+        }
     }
 
     pub fn implicit_app_allowed(app_id: Option<&str>, focus_app: &str) -> bool {
@@ -341,6 +334,153 @@ pub mod services {
         }
     }
 
+    pub trait RestrictionStep {
+        fn component(&self) -> &'static str;
+        fn preflight(&mut self) -> Result<(), String>;
+        fn activate(&mut self) -> Result<(), String>;
+        fn deactivate(&mut self) -> Result<(), String>;
+        fn healthy(&self) -> bool;
+    }
+
+    pub trait BrowserRestrictionAdapter: RestrictionStep {}
+    pub trait ApplicationRestrictionAdapter: RestrictionStep {}
+    pub trait DoNotDisturbAdapter: RestrictionStep {}
+
+    #[derive(Debug, Clone)]
+    pub struct MockRestrictionStep {
+        pub component: &'static str,
+        pub failure: MockFailure,
+        pub active: bool,
+        pub cleanup_attempts: u32,
+    }
+
+    impl MockRestrictionStep {
+        pub fn healthy(component: &'static str) -> Self {
+            Self {
+                component,
+                failure: MockFailure::None,
+                active: false,
+                cleanup_attempts: 0,
+            }
+        }
+    }
+
+    impl RestrictionStep for MockRestrictionStep {
+        fn component(&self) -> &'static str {
+            self.component
+        }
+        fn preflight(&mut self) -> Result<(), String> {
+            if self.failure == MockFailure::Preflight {
+                Err(format!("{} preflight failed (simulated)", self.component))
+            } else {
+                Ok(())
+            }
+        }
+        fn activate(&mut self) -> Result<(), String> {
+            if self.failure == MockFailure::Activate {
+                Err(format!("{} activation failed (simulated)", self.component))
+            } else {
+                self.active = true;
+                Ok(())
+            }
+        }
+        fn deactivate(&mut self) -> Result<(), String> {
+            self.cleanup_attempts += 1;
+            if self.failure == MockFailure::Deactivate {
+                Err(format!("{} cleanup failed (simulated)", self.component))
+            } else {
+                self.active = false;
+                Ok(())
+            }
+        }
+        fn healthy(&self) -> bool {
+            self.failure == MockFailure::None
+        }
+    }
+
+    impl BrowserRestrictionAdapter for MockRestrictionStep {}
+    impl ApplicationRestrictionAdapter for MockRestrictionStep {}
+    impl DoNotDisturbAdapter for MockRestrictionStep {}
+
+    #[derive(Debug, Clone)]
+    pub struct RestrictionCoordinator<B, A, D> {
+        pub browser: B,
+        pub applications: A,
+        pub do_not_disturb: D,
+    }
+
+    pub type MockRestrictionCoordinator =
+        RestrictionCoordinator<MockRestrictionStep, MockRestrictionStep, MockRestrictionStep>;
+
+    impl Default for MockRestrictionCoordinator {
+        fn default() -> Self {
+            Self {
+                browser: MockRestrictionStep::healthy("browser"),
+                applications: MockRestrictionStep::healthy("applications"),
+                do_not_disturb: MockRestrictionStep::healthy("do_not_disturb"),
+            }
+        }
+    }
+
+    impl<B, A, D> RestrictionCoordinator<B, A, D>
+    where
+        B: BrowserRestrictionAdapter,
+        A: ApplicationRestrictionAdapter,
+        D: DoNotDisturbAdapter,
+    {
+        fn cleanup_all(&mut self) -> Result<(), String> {
+            let mut failures = Vec::new();
+            for result in [
+                self.do_not_disturb.deactivate(),
+                self.applications.deactivate(),
+                self.browser.deactivate(),
+            ] {
+                if let Err(error) = result {
+                    failures.push(error);
+                }
+            }
+            if failures.is_empty() {
+                Ok(())
+            } else {
+                Err(failures.join("; "))
+            }
+        }
+    }
+
+    impl<B, A, D> RestrictionAdapter for RestrictionCoordinator<B, A, D>
+    where
+        B: BrowserRestrictionAdapter,
+        A: ApplicationRestrictionAdapter,
+        D: DoNotDisturbAdapter,
+    {
+        fn preflight(&mut self) -> Result<(), String> {
+            self.browser.preflight()?;
+            self.applications.preflight()?;
+            self.do_not_disturb.preflight()
+        }
+        fn activate(&mut self) -> Result<(), String> {
+            if let Err(error) = self.browser.activate() {
+                let _ = self.cleanup_all();
+                return Err(error);
+            }
+            if let Err(error) = self.applications.activate() {
+                let _ = self.cleanup_all();
+                return Err(error);
+            }
+            if let Err(error) = self.do_not_disturb.activate() {
+                let _ = self.cleanup_all();
+                return Err(error);
+            }
+            Ok(())
+        }
+        fn deactivate(&mut self) -> Result<(), String> {
+            self.cleanup_all()
+        }
+        fn healthy(&self) -> bool {
+            self.browser.healthy() && self.applications.healthy() && self.do_not_disturb.healthy()
+        }
+    }
+
     #[derive(Debug, Clone, Eq, PartialEq)]
     pub enum SessionError {
         Invalid(String),
@@ -361,6 +501,7 @@ pub mod services {
         pub restriction: R,
         pub current: Option<Session>,
         pub history: Vec<SessionSummary>,
+        pub recovery_required: bool,
         sequence: u64,
     }
     impl<C: Clock, R: RestrictionAdapter> SessionService<C, R> {
@@ -370,6 +511,7 @@ pub mod services {
                 restriction,
                 current: None,
                 history: Vec::new(),
+                recovery_required: false,
                 sequence: 0,
             }
         }
@@ -378,14 +520,15 @@ pub mod services {
             seconds: u64,
             intention: Option<String>,
         ) -> Result<TimerSnapshot, SessionError> {
-            if self.current.is_some() {
+            if self.current.is_some() || self.recovery_required {
                 return Err(SessionError::Conflict);
             }
             let planned =
                 validate_duration(seconds).map_err(|e| SessionError::Invalid(e.to_string()))?;
-            self.restriction
-                .preflight()
-                .map_err(SessionError::Integration)?;
+            if let Err(error) = self.restriction.preflight() {
+                let _ = self.restriction.deactivate();
+                return Err(SessionError::Integration(error));
+            }
             self.sequence += 1;
             let mut session = Session {
                 id: format!("session-{}", self.sequence),
@@ -448,6 +591,7 @@ pub mod services {
             Ok(self.snapshot())
         }
         pub fn resume(&mut self) -> Result<TimerSnapshot, SessionError> {
+            self.accrue();
             let s = self
                 .current
                 .as_mut()
@@ -469,7 +613,11 @@ pub mod services {
             let mut s = self.current.take().ok_or(SessionError::IllegalTransition)?;
             s.state = SessionState::Ending;
             let cleanup = self.restriction.deactivate().is_ok();
-            s.state = if reason == FinishReason::Interrupted {
+            self.recovery_required = !cleanup;
+            s.state = if matches!(
+                reason,
+                FinishReason::Interrupted | FinishReason::ExtensionOrAppCrash
+            ) {
                 SessionState::Interrupted
             } else {
                 SessionState::Finished
@@ -484,11 +632,7 @@ pub mod services {
                 cleanup_complete: cleanup,
             };
             self.history.push(summary.clone());
-            if cleanup {
-                Ok(summary)
-            } else {
-                Err(SessionError::CleanupIncomplete)
-            }
+            Ok(summary)
         }
         pub fn tick(&mut self) -> Result<Option<SessionSummary>, SessionError> {
             self.accrue();
@@ -504,17 +648,35 @@ pub mod services {
         }
         pub fn recover_abandoned(&mut self) -> Option<SessionSummary> {
             self.current.take().map(|s| {
+                let cleanup_complete = self.restriction.deactivate().is_ok();
+                self.recovery_required = !cleanup_complete;
                 let summary = SessionSummary {
                     id: s.id,
                     focused: s.focused,
                     paused: s.paused,
                     blocked_attempts: s.blocked_attempts,
                     reason: FinishReason::Interrupted,
-                    cleanup_complete: self.restriction.deactivate().is_ok(),
+                    cleanup_complete,
                 };
                 self.history.push(summary.clone());
                 summary
             })
+        }
+        pub fn runtime_failure(
+            &mut self,
+            _component: &str,
+        ) -> Result<SessionSummary, SessionError> {
+            self.finish(FinishReason::ExtensionOrAppCrash)
+        }
+        pub fn retry_cleanup(&mut self) -> Result<(), SessionError> {
+            if !self.recovery_required {
+                return Ok(());
+            }
+            self.restriction
+                .deactivate()
+                .map_err(|_| SessionError::CleanupIncomplete)?;
+            self.recovery_required = false;
+            Ok(())
         }
     }
 
@@ -629,12 +791,53 @@ mod tests {
         };
         let mut service = SessionService::new(FakeClock::new(1), restriction);
         service.start(10, None).unwrap();
-        assert_eq!(
-            service.finish(FinishReason::EndedEarly),
-            Err(SessionError::CleanupIncomplete)
-        );
-        assert!(!service.history[0].cleanup_complete);
+        let summary = service.finish(FinishReason::EndedEarly).unwrap();
+        assert!(!summary.cleanup_complete);
         assert_eq!(service.restriction.cleanup_attempts, 1);
+    }
+    #[test]
+    fn coordinator_cleans_up_every_startup_failure() {
+        for failure in [MockFailure::Preflight, MockFailure::Activate] {
+            for component in 0..3 {
+                let mut restriction = MockRestrictionCoordinator::default();
+                match component {
+                    0 => restriction.browser.failure = failure,
+                    1 => restriction.applications.failure = failure,
+                    _ => restriction.do_not_disturb.failure = failure,
+                }
+                let mut service = SessionService::new(FakeClock::new(1), restriction);
+                assert!(matches!(
+                    service.start(10, None),
+                    Err(SessionError::Integration(_))
+                ));
+                assert!(service.current.is_none());
+                assert!(service.restriction.browser.cleanup_attempts >= 1);
+                assert!(service.restriction.applications.cleanup_attempts >= 1);
+                assert!(service.restriction.do_not_disturb.cleanup_attempts >= 1);
+            }
+        }
+    }
+    #[test]
+    fn coordinator_reports_every_cleanup_failure_and_requires_recovery() {
+        for component in 0..3 {
+            let mut service =
+                SessionService::new(FakeClock::new(1), MockRestrictionCoordinator::default());
+            service.start(10, None).unwrap();
+            match component {
+                0 => service.restriction.browser.failure = MockFailure::Deactivate,
+                1 => service.restriction.applications.failure = MockFailure::Deactivate,
+                _ => service.restriction.do_not_disturb.failure = MockFailure::Deactivate,
+            }
+            let summary = service.finish(FinishReason::EndedEarly).unwrap();
+            assert!(!summary.cleanup_complete);
+            assert!(service.recovery_required);
+            assert_eq!(service.start(10, None), Err(SessionError::Conflict));
+            service.restriction.browser.failure = MockFailure::None;
+            service.restriction.applications.failure = MockFailure::None;
+            service.restriction.do_not_disturb.failure = MockFailure::None;
+            service.retry_cleanup().unwrap();
+            assert!(!service.recovery_required);
+        }
     }
     #[test]
     fn malformed_whitelist_is_atomic() {

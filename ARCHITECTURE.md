@@ -57,7 +57,11 @@ The frontend never opens SQLite directly. It uses typed Tauri commands.
 - **Folder updates:** `notify` filesystem watcher plus deterministic rescans; rescan on startup and when reopening the library as a fallback
 - **Device behavior:** Explicit `waiting_for_output_device` health state and recovery onto an available device
 
-The P1-23 FFmpeg/VLC spike proves target-machine feasibility, not the final playback library. Playback remains behind an adapter until the production Rust choice passes the same tests.
+The P1-23 FFmpeg/VLC spike proves target-machine feasibility, not the final playback library.
+
+#### Phase 2 audio adapter decision
+
+Phase 2 uses `rodio` with its Symphonia MP3 decoder for playback, `id3` for embedded metadata, and `notify` for live folder updates. The implementation remains behind the `AudioEngine` boundary so output-device handling and future decoder changes do not leak into the session domain or React UI. Direct imported paths remain authoritative; Deepify does not copy media into application storage. Startup and library-open rescans provide deterministic recovery when watcher events are missed.
 
 ### Linux and browser integrations
 

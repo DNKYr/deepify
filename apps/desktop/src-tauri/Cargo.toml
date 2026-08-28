@@ -2,14 +2,33 @@
 name = "deepify-desktop"
 version.workspace = true
 edition.workspace = true
+build = "build.rs"
 
 [lib]
 name = "deepify"
 path = "src/lib.rs"
 
 [dependencies]
-tauri = { version = "2.8.4" }
-tauri-plugin-single-instance = "2.3.6"
+id3 = "1.17.0"
+notify = "8.2.0"
+rodio = { version = "0.22.2", default-features = false, features = ["playback", "symphonia-mp3"] }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tauri = { version = "2.11.5", features = [] }
+tauri-plugin-dialog = "2.7.2"
+tauri-plugin-notification = "2.3.3"
+tauri-plugin-single-instance = "2.4.3"
+thiserror = "2.0"
+url = "2.5"
+uuid = { version = "1.18", features = ["v4"] }
+walkdir = "2.5"
+
+[dev-dependencies]
+tempfile = "3.23"
+
+[build-dependencies]
+tauri-build = { version = "2.5.3", features = [] }
 
 [[bin]]
 name = "deepify"

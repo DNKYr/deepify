@@ -1,7 +1,12 @@
 //! Local MP3 library and queue rules. Actual device I/O is an adapter boundary;
 //! a missing file/output device never changes focus-session state.
+use id3::TagLike;
+use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::{
+    fs::File,
     path::{Path, PathBuf},
+    sync::mpsc,
+    time::Duration,
     time::SystemTime,
 };
 
@@ -86,6 +91,17 @@ impl AudioEngine {
     pub fn pause(&mut self) {
         self.playing = false;
     }
+    pub fn previous(&mut self) {
+        if self.queue.is_empty() {
+            self.current = None;
+            self.playing = false;
+        } else {
+            self.current = Some(
+                self.current
+                    .map_or(0, |index| (index + self.queue.len() - 1) % self.queue.len()),
+            );
+        }
+    }
     pub fn next(&mut self) {
         if self.queue.is_empty() {
             self.current = None;
@@ -93,6 +109,9 @@ impl AudioEngine {
         } else {
             self.current = Some(self.current.map_or(0, |i| (i + 1) % self.queue.len()));
         }
+    }
+    pub fn set_volume(&mut self, volume: u8) {
+        self.volume = volume.min(100);
     }
 }
 fn visit(folder: &Path, out: &mut Vec<PathBuf>) {
@@ -117,18 +136,96 @@ fn track_from_path(path: PathBuf) -> Track {
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("Unknown track");
-    let (artist, title) = stem
+    let (fallback_artist, fallback_title) = stem
         .split_once(" - ")
         .map_or((None, stem.to_string()), |(a, t)| {
             (Some(a.to_string()), t.to_string())
         });
+    let tag = id3::Tag::read_from_path(&path).ok();
     Track {
         available: path.exists(),
         path,
-        title,
-        artist,
-        album: None,
+        title: tag
+            .as_ref()
+            .and_then(|value| value.title())
+            .filter(|value| !value.trim().is_empty())
+            .map_or(fallback_title, str::to_string),
+        artist: tag
+            .as_ref()
+            .and_then(|value| value.artist())
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string)
+            .or(fallback_artist),
+        album: tag
+            .as_ref()
+            .and_then(|value| value.album())
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string),
     }
+}
+
+/// Production output adapter selected for P2-09. Construction is fallible so
+/// the focus session can continue in `waiting_for_output_device` without music.
+pub struct RodioPlayer {
+    _output: rodio::MixerDeviceSink,
+    player: rodio::Player,
+}
+
+impl RodioPlayer {
+    pub fn open_default() -> Result<Self, String> {
+        let output =
+            rodio::DeviceSinkBuilder::open_default_sink().map_err(|error| error.to_string())?;
+        let player = rodio::Player::connect_new(output.mixer());
+        Ok(Self {
+            _output: output,
+            player,
+        })
+    }
+    pub fn output_description(&self) -> String {
+        "Default system output".to_string()
+    }
+    pub fn play_file(&self, path: &Path) -> Result<(), String> {
+        let file = File::open(path).map_err(|error| error.to_string())?;
+        let source = rodio::Decoder::try_from(file).map_err(|error| error.to_string())?;
+        self.player.stop();
+        self.player.append(source);
+        self.player.play();
+        Ok(())
+    }
+    pub fn pause(&self) {
+        self.player.pause();
+    }
+    pub fn resume(&self) {
+        self.player.play();
+    }
+    pub fn set_volume(&self, volume: u8) {
+        self.player.set_volume(f32::from(volume.min(100)) / 100.0);
+    }
+    pub fn stop(&self) {
+        self.player.stop();
+    }
+    pub fn fade_and_stop(&self, duration: Duration) {
+        let start = self.player.volume();
+        for step in (0..20).rev() {
+            self.player.set_volume(start * step as f32 / 20.0);
+            std::thread::sleep(duration / 20);
+        }
+        self.player.stop();
+        self.player.set_volume(start);
+    }
+}
+
+pub fn watch_folder(
+    path: &Path,
+) -> Result<(RecommendedWatcher, mpsc::Receiver<()>), notify::Error> {
+    let (sender, receiver) = mpsc::channel();
+    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+        if event.is_ok() {
+            let _ = sender.send(());
+        }
+    })?;
+    watcher.watch(path, RecursiveMode::Recursive)?;
+    Ok((watcher, receiver))
 }
 pub fn scan_timestamp() -> u64 {
     SystemTime::now()
@@ -170,5 +267,22 @@ mod tests {
         a.set_output_available(false);
         assert_eq!(a.health, PlaybackHealth::WaitingForOutputDevice);
         assert!(!a.playing);
+    }
+
+    #[test]
+    #[ignore = "requires DEEPIFY_AUDIO_FIXTURE and a live system output device"]
+    fn production_adapter_decodes_and_controls_real_mp3() {
+        let fixture = std::env::var_os("DEEPIFY_AUDIO_FIXTURE")
+            .map(PathBuf::from)
+            .expect("DEEPIFY_AUDIO_FIXTURE must point to a real MP3");
+        let player = RodioPlayer::open_default().expect("system output device must be available");
+        player.set_volume(5);
+        player
+            .play_file(&fixture)
+            .expect("Rodio/Symphonia must decode the real MP3 fixture");
+        std::thread::sleep(Duration::from_millis(100));
+        player.pause();
+        player.resume();
+        player.stop();
     }
 }
