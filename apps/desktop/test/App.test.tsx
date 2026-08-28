@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   resolveBlocked: vi.fn(),
   failure: vi.fn(),
   rerun: vi.fn(),
+  repair: vi.fn(),
 }));
 vi.mock("../src/backend", () => ({
   visualDemoSnapshot: undefined,
@@ -50,6 +51,7 @@ vi.mock("../src/backend", () => ({
   resolveBlockedApps: mocks.resolveBlocked,
   simulateRuntimeFailure: mocks.failure,
   rerunSetup: mocks.rerun,
+  repairIntegrations: mocks.repair,
   onSnapshotChanged: vi.fn().mockResolvedValue(() => undefined),
 }));
 import { App } from "../src/App";
@@ -220,5 +222,49 @@ describe("Phase 2 vertical flow", () => {
     await userEvent.click(screen.getByRole("button", { name: /continue/i }));
     await userEvent.click(screen.getByRole("button", { name: /skip music/i }));
     expect(screen.getByText(/music: skipped/i)).toBeVisible();
+  });
+
+  test("idle navigation and form controls follow the visible keyboard order", async () => {
+    const user = userEvent.setup();
+    renderApp();
+    await screen.findByLabelText(/work duration/i);
+    for (const name of [
+      "Focus Room",
+      "Sound Library",
+      "Whitelist",
+      "Session History",
+      "Settings",
+    ]) {
+      await user.tab();
+      expect(screen.getByRole("link", { name })).toHaveFocus();
+    }
+    await user.tab();
+    expect(screen.getByLabelText(/work duration/i)).toHaveFocus();
+    await user.tab();
+    expect(screen.getByLabelText(/intention/i)).toHaveFocus();
+    await user.tab();
+    expect(screen.getByLabelText(/playlist/i)).toHaveFocus();
+    await user.tab();
+    expect(screen.getByRole("button", { name: /start focus/i })).toHaveFocus();
+  });
+
+  test("settings save the default duration and expose simulated health repair", async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/settings"]}>
+        <App />
+      </MemoryRouter>,
+    );
+    const duration = await screen.findByLabelText(/default duration/i);
+    await user.clear(duration);
+    await user.type(duration, "45");
+    await user.click(
+      screen.getByRole("button", { name: /save default duration/i }),
+    );
+    expect(mocks.save).toHaveBeenCalledWith("default_duration_seconds", "2700");
+    await user.click(
+      screen.getByRole("button", { name: /rerun simulated health checks/i }),
+    );
+    expect(mocks.repair).toHaveBeenCalledOnce();
   });
 });

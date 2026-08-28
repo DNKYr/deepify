@@ -240,6 +240,8 @@ export const resolveBlockedApps = () =>
 export const simulateRuntimeFailure = () =>
   request<AppSnapshot>("simulate_runtime_failure");
 export const rerunSetup = () => request<AppSnapshot>("rerun_setup");
+export const repairIntegrations = () =>
+  request<AppSnapshot>("repair_integrations");
 export const onSnapshotChanged = (callback: (snapshot: AppSnapshot) => void) =>
   demoState
     ? Promise.resolve(() => undefined)

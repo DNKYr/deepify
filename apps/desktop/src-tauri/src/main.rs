@@ -658,6 +658,28 @@ fn rerun_setup(app: AppHandle, state: State<'_, AppState>) -> Result<AppSnapshot
         .map_err(|error| error.to_string())?;
     emit_snapshot(&app, &state)
 }
+
+#[tauri::command]
+fn repair_integrations(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<AppSnapshotDto, String> {
+    let mut sessions = state
+        .sessions
+        .lock()
+        .map_err(|_| "session lock poisoned".to_string())?;
+    if sessions.current.is_some() {
+        return Err("conflict: integration repair is unavailable during a session".into());
+    }
+    sessions.restriction = MockRestrictionCoordinator::default();
+    if sessions.recovery_required {
+        sessions
+            .retry_cleanup()
+            .map_err(|error| error.to_string())?;
+    }
+    drop(sessions);
+    emit_snapshot(&app, &state)
+}
 #[tauri::command]
 fn add_whitelist(
     app: AppHandle,
@@ -1063,6 +1085,7 @@ fn main() {
             save_setting,
             complete_setup,
             rerun_setup,
+            repair_integrations,
             add_whitelist,
             remove_whitelist,
             import_music_files,

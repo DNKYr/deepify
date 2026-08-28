@@ -13,6 +13,7 @@ import {
   importMusicFolder,
   onSnapshotChanged,
   removeWhitelist,
+  repairIntegrations,
   resolveBlockedApps,
   rerunSetup,
   saveSetting,
@@ -628,6 +629,12 @@ function History({ snapshot }: { snapshot: AppSnapshot }) {
 
 function Settings({ snapshot, update }: PageProps) {
   const navigate = useNavigate();
+  const [defaultDuration, setDefaultDuration] = useState(
+    String(snapshot.settings.defaultDurationSeconds / 60),
+  );
+  const defaultDurationSeconds = Number(defaultDuration) * 60;
+  const validDefaultDuration =
+    Number.isFinite(defaultDurationSeconds) && defaultDurationSeconds > 0;
   return (
     <section className="card">
       <h2>Settings</h2>
@@ -639,7 +646,34 @@ function Settings({ snapshot, update }: PageProps) {
           </li>
         ))}
       </ul>
+      <button onClick={async () => update(await repairIntegrations())}>
+        Rerun simulated health checks
+      </button>
       <h3>Focus defaults</h3>
+      <form
+        onSubmit={async (event) => {
+          event.preventDefault();
+          if (validDefaultDuration) {
+            update(
+              await saveSetting(
+                "default_duration_seconds",
+                String(defaultDurationSeconds),
+              ),
+            );
+          }
+        }}
+      >
+        <label>
+          Default duration (minutes)
+          <input
+            inputMode="numeric"
+            value={defaultDuration}
+            aria-invalid={!validDefaultDuration}
+            onChange={(event) => setDefaultDuration(event.target.value)}
+          />
+        </label>
+        <button disabled={!validDefaultDuration}>Save default duration</button>
+      </form>
       <label>
         Color scheme
         <select
