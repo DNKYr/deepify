@@ -290,6 +290,7 @@ pub mod services {
     #[derive(Debug, Clone)]
     pub struct MockRestriction {
         pub failure: MockFailure,
+        pub latency: Duration,
         pub active: bool,
         pub cleanup_attempts: u32,
         pub blocked_attempts: u32,
@@ -298,6 +299,7 @@ pub mod services {
         fn default() -> Self {
             Self {
                 failure: MockFailure::None,
+                latency: Duration::ZERO,
                 active: false,
                 cleanup_attempts: 0,
                 blocked_attempts: 0,
@@ -306,6 +308,7 @@ pub mod services {
     }
     impl RestrictionAdapter for MockRestriction {
         fn preflight(&mut self) -> Result<(), String> {
+            std::thread::sleep(self.latency);
             if self.failure == MockFailure::Preflight {
                 Err("simulated integration unavailable".into())
             } else {
@@ -313,6 +316,7 @@ pub mod services {
             }
         }
         fn activate(&mut self) -> Result<(), String> {
+            std::thread::sleep(self.latency);
             if self.failure == MockFailure::Activate {
                 Err("simulated activation failure".into())
             } else {
@@ -321,6 +325,7 @@ pub mod services {
             }
         }
         fn deactivate(&mut self) -> Result<(), String> {
+            std::thread::sleep(self.latency);
             self.cleanup_attempts += 1;
             if self.failure == MockFailure::Deactivate {
                 Err("simulated cleanup failure".into())
@@ -350,6 +355,7 @@ pub mod services {
     pub struct MockRestrictionStep {
         pub component: &'static str,
         pub failure: MockFailure,
+        pub latency: Duration,
         pub active: bool,
         pub cleanup_attempts: u32,
     }
@@ -359,6 +365,7 @@ pub mod services {
             Self {
                 component,
                 failure: MockFailure::None,
+                latency: Duration::ZERO,
                 active: false,
                 cleanup_attempts: 0,
             }
@@ -370,6 +377,7 @@ pub mod services {
             self.component
         }
         fn preflight(&mut self) -> Result<(), String> {
+            std::thread::sleep(self.latency);
             if self.failure == MockFailure::Preflight {
                 Err(format!("{} preflight failed (simulated)", self.component))
             } else {
@@ -377,6 +385,7 @@ pub mod services {
             }
         }
         fn activate(&mut self) -> Result<(), String> {
+            std::thread::sleep(self.latency);
             if self.failure == MockFailure::Activate {
                 Err(format!("{} activation failed (simulated)", self.component))
             } else {
@@ -385,6 +394,7 @@ pub mod services {
             }
         }
         fn deactivate(&mut self) -> Result<(), String> {
+            std::thread::sleep(self.latency);
             self.cleanup_attempts += 1;
             if self.failure == MockFailure::Deactivate {
                 Err(format!("{} cleanup failed (simulated)", self.component))
@@ -838,6 +848,16 @@ mod tests {
             service.retry_cleanup().unwrap();
             assert!(!service.recovery_required);
         }
+    }
+    #[test]
+    fn configurable_mock_latency_applies_to_each_adapter_step() {
+        let mut step = MockRestrictionStep::healthy("browser");
+        step.latency = Duration::from_millis(2);
+        let started = std::time::Instant::now();
+        step.preflight().unwrap();
+        step.activate().unwrap();
+        step.deactivate().unwrap();
+        assert!(started.elapsed() >= Duration::from_millis(6));
     }
     #[test]
     fn malformed_whitelist_is_atomic() {

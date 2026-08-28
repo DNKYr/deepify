@@ -2,8 +2,13 @@
 
 use deepify::{
     audio::{watch_folder, AudioEngine, PlaybackHealth, RodioPlayer, Track},
-    domain::{normalize_app_id, normalize_website, validate_duration, FinishReason, SessionState},
-    services::{MockRestrictionCoordinator, SessionService, SystemClock},
+    domain::{
+        implicit_app_allowed, normalize_app_id, normalize_website, validate_duration,
+        website_allowed, FinishReason, SessionState, WhitelistEntry,
+    },
+    services::{
+        MockFailure, MockRestrictionCoordinator, RestrictionStep, SessionService, SystemClock,
+    },
     storage::{FinishSessionRecord, SqliteStore, StoredHistory, StoredTrack},
 };
 use serde::Serialize;
@@ -13,6 +18,7 @@ use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_notification::NotificationExt;
 
 struct AppState {
+    diagnostic_id: String,
     sessions: Mutex<SessionService<SystemClock, MockRestrictionCoordinator>>,
     database: Mutex<SqliteStore>,
     audio: Mutex<AudioEngine>,
@@ -98,6 +104,7 @@ struct HistoryDto {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AppSnapshotDto {
+    diagnostic_id: String,
     session: SessionSnapshotDto,
     settings: SettingsDto,
     health: Vec<HealthDto>,
@@ -108,6 +115,13 @@ struct AppSnapshotDto {
     playback: PlaybackDto,
     blocked_apps: Vec<String>,
     summary: Option<SessionSummaryDto>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WhitelistTestDto {
+    allowed: bool,
+    detail: &'static str,
 }
 
 fn state_name(state: SessionState) -> &'static str {
@@ -182,6 +196,11 @@ fn snapshot(state: &AppState) -> Result<AppSnapshotDto, String> {
             latest_notice: None,
         }
     };
+    let integration_health = [
+        sessions.restriction.browser.healthy(),
+        sessions.restriction.applications.healthy(),
+        sessions.restriction.do_not_disturb.healthy(),
+    ];
     drop(sessions);
     let database = state
         .database
@@ -272,6 +291,7 @@ fn snapshot(state: &AppState) -> Result<AppSnapshotDto, String> {
         .clone();
     let now = deepify::domain::now_seconds();
     Ok(AppSnapshotDto {
+        diagnostic_id: state.diagnostic_id.clone(),
         session,
         settings: SettingsDto {
             default_duration_seconds,
@@ -282,21 +302,45 @@ fn snapshot(state: &AppState) -> Result<AppSnapshotDto, String> {
         health: vec![
             HealthDto {
                 component: "Firefox/Zen profile",
-                status: "healthy",
+                status: if integration_health[0] {
+                    "healthy"
+                } else {
+                    "unhealthy"
+                },
                 last_checked: now,
-                detail: "Simulated connection",
+                detail: if integration_health[0] {
+                    "Simulated connection"
+                } else {
+                    "Simulated preflight failure"
+                },
             },
             HealthDto {
                 component: "Niri application monitor",
-                status: "healthy",
+                status: if integration_health[1] {
+                    "healthy"
+                } else {
+                    "unhealthy"
+                },
                 last_checked: now,
-                detail: "Simulated inventory",
+                detail: if integration_health[1] {
+                    "Simulated inventory"
+                } else {
+                    "Simulated preflight failure"
+                },
             },
             HealthDto {
                 component: "Noctalia DND",
-                status: "healthy",
+                status: if integration_health[2] {
+                    "healthy"
+                } else {
+                    "unhealthy"
+                },
                 last_checked: now,
-                detail: "Simulated preservation",
+                detail: if integration_health[2] {
+                    "Simulated preservation"
+                } else {
+                    "Simulated preflight failure"
+                },
             },
         ],
         whitelist,
@@ -681,6 +725,22 @@ fn repair_integrations(
     emit_snapshot(&app, &state)
 }
 #[tauri::command]
+fn simulate_unhealthy_integration(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<AppSnapshotDto, String> {
+    let mut sessions = state
+        .sessions
+        .lock()
+        .map_err(|_| "session lock poisoned".to_string())?;
+    if sessions.current.is_some() {
+        return Err("conflict: health simulation is unavailable during a session".into());
+    }
+    sessions.restriction.browser.failure = MockFailure::Preflight;
+    drop(sessions);
+    emit_snapshot(&app, &state)
+}
+#[tauri::command]
 fn add_whitelist(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -717,6 +777,55 @@ fn add_whitelist(
         )
         .map_err(|error| error.to_string())?;
     emit_snapshot(&app, &state)
+}
+#[tauri::command]
+fn test_whitelist(
+    state: State<'_, AppState>,
+    kind: String,
+    value: String,
+) -> Result<WhitelistTestDto, String> {
+    let stored = state
+        .database
+        .lock()
+        .map_err(|_| "database lock poisoned".to_string())?
+        .whitelist()
+        .map_err(|error| error.to_string())?;
+    let rules = stored
+        .iter()
+        .filter_map(|(_, stored_kind, normalized)| match stored_kind.as_str() {
+            "website" => normalize_website(normalized)
+                .ok()
+                .map(|(host, path)| WhitelistEntry::Website { host, path }),
+            "application" => Some(WhitelistEntry::Application(normalized.clone())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let allowed = match kind.as_str() {
+        "website" => {
+            let probe = if value.contains("://") {
+                value
+            } else {
+                format!("https://{value}")
+            };
+            website_allowed(&probe, &rules)
+        }
+        "application" => {
+            let candidate = normalize_app_id(&value).map_err(|error| error.to_string())?;
+            rules
+                .iter()
+                .any(|rule| matches!(rule, WhitelistEntry::Application(id) if id == &candidate))
+                || implicit_app_allowed(Some(&candidate), "com.deepify.desktop")
+        }
+        _ => return Err("validation_error: invalid whitelist kind".into()),
+    };
+    Ok(WhitelistTestDto {
+        allowed,
+        detail: if allowed {
+            "Allowed by the current local configuration"
+        } else {
+            "Would be blocked by the current local configuration"
+        },
+    })
 }
 #[tauri::command]
 fn remove_whitelist(
@@ -936,6 +1045,19 @@ fn audio_toggle(app: AppHandle, state: State<'_, AppState>) -> Result<AppSnapsho
 }
 
 #[tauri::command]
+fn audio_retry_output(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<AppSnapshotDto, String> {
+    *state
+        .player
+        .lock()
+        .map_err(|_| "player lock poisoned".to_string())? = None;
+    play_current_audio(&state);
+    emit_snapshot(&app, &state)
+}
+
+#[tauri::command]
 fn audio_previous(app: AppHandle, state: State<'_, AppState>) -> Result<AppSnapshotDto, String> {
     let was_playing = {
         let mut audio = state
@@ -1056,6 +1178,7 @@ fn main() {
                 })
                 .collect();
             app.manage(AppState {
+                diagnostic_id: uuid::Uuid::new_v4().simple().to_string(),
                 sessions: Mutex::new(SessionService::new(
                     SystemClock,
                     MockRestrictionCoordinator::default(),
@@ -1086,11 +1209,14 @@ fn main() {
             complete_setup,
             rerun_setup,
             repair_integrations,
+            simulate_unhealthy_integration,
             add_whitelist,
+            test_whitelist,
             remove_whitelist,
             import_music_files,
             import_music_folder,
             audio_toggle,
+            audio_retry_output,
             audio_previous,
             audio_next,
             audio_set_volume,

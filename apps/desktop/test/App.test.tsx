@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   files: vi.fn(),
   folder: vi.fn(),
   audioToggle: vi.fn(),
+  audioRetry: vi.fn(),
   audioPrevious: vi.fn(),
   audioNext: vi.fn(),
   audioVolume: vi.fn(),
@@ -27,6 +28,8 @@ const mocks = vi.hoisted(() => ({
   failure: vi.fn(),
   rerun: vi.fn(),
   repair: vi.fn(),
+  unhealthy: vi.fn(),
+  testWhitelist: vi.fn(),
 }));
 vi.mock("../src/backend", () => ({
   visualDemoSnapshot: undefined,
@@ -43,6 +46,7 @@ vi.mock("../src/backend", () => ({
   importMusicFiles: mocks.files,
   importMusicFolder: mocks.folder,
   audioToggle: mocks.audioToggle,
+  audioRetryOutput: mocks.audioRetry,
   audioPrevious: mocks.audioPrevious,
   audioNext: mocks.audioNext,
   audioSetVolume: mocks.audioVolume,
@@ -52,11 +56,14 @@ vi.mock("../src/backend", () => ({
   simulateRuntimeFailure: mocks.failure,
   rerunSetup: mocks.rerun,
   repairIntegrations: mocks.repair,
+  simulateUnhealthyIntegration: mocks.unhealthy,
+  testWhitelist: mocks.testWhitelist,
   onSnapshotChanged: vi.fn().mockResolvedValue(() => undefined),
 }));
 import { App } from "../src/App";
 
 const base = (overrides: Partial<AppSnapshot> = {}): AppSnapshot => ({
+  diagnosticId: "diagnostic-test-1234",
   session: {
     state: "not_working",
     remainingSeconds: 0,
@@ -100,6 +107,10 @@ beforeEach(() => {
   mocks.snapshot.mockResolvedValue(initial);
   for (const mock of Object.values(mocks))
     if (mock !== mocks.snapshot) mock.mockResolvedValue(initial);
+  mocks.testWhitelist.mockResolvedValue({
+    allowed: true,
+    detail: "Allowed by the current local configuration",
+  });
 });
 
 describe("Phase 2 vertical flow", () => {
@@ -139,6 +150,7 @@ describe("Phase 2 vertical flow", () => {
   });
 
   test("early end requires confirmation and displays backend summary", async () => {
+    const user = userEvent.setup();
     const active = base({
       session: {
         state: "working",
@@ -162,11 +174,17 @@ describe("Phase 2 vertical flow", () => {
     mocks.snapshot.mockResolvedValue(active);
     mocks.end.mockResolvedValue(ended);
     renderApp();
-    await userEvent.click(
-      await screen.findByRole("button", { name: /^end session$/i }),
-    );
+    const endTrigger = await screen.findByRole("button", {
+      name: /^end session$/i,
+    });
+    await user.click(endTrigger);
     expect(screen.getByRole("dialog")).toBeVisible();
-    await userEvent.click(
+    expect(screen.getByRole("button", { name: /keep working/i })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(endTrigger).toHaveFocus();
+    await user.click(endTrigger);
+    await user.click(
       screen.getAllByRole("button", { name: /^end session$/i }).at(-1)!,
     );
     expect(await screen.findByText("Ended early")).toBeVisible();
@@ -202,6 +220,66 @@ describe("Phase 2 vertical flow", () => {
       /nothing was saved/i,
     );
     expect(input).toHaveValue("bad value");
+  });
+
+  test("whitelist configuration test is local, typed, and observable", async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/whitelist"]}>
+        <App />
+      </MemoryRouter>,
+    );
+    const testInput = await screen.findByLabelText(
+      /website or application to test/i,
+    );
+    await user.type(testInput, "docs.example.com/work");
+    await user.click(
+      screen.getByRole("button", { name: /^test configuration$/i }),
+    );
+    expect(mocks.testWhitelist).toHaveBeenCalledWith(
+      "website",
+      "docs.example.com/work",
+    );
+    expect(await screen.findByText(/this test is local/i)).toHaveTextContent(
+      /allowed.*not saved/i,
+    );
+  });
+
+  test("history shows separate daily and Monday-based weekly totals", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    mocks.snapshot.mockResolvedValue(
+      base({
+        history: [
+          {
+            id: "today",
+            focusedSeconds: 600,
+            pausedSeconds: 0,
+            blockedAttempts: 0,
+            reason: "completed",
+            cleanupComplete: true,
+            startedAt: now,
+          },
+          {
+            id: "old",
+            focusedSeconds: 300,
+            pausedSeconds: 0,
+            blockedAttempts: 0,
+            reason: "completed",
+            cleanupComplete: true,
+            startedAt: 1,
+          },
+        ],
+      }),
+    );
+    render(
+      <MemoryRouter initialEntries={["/history"]}>
+        <App />
+      </MemoryRouter>,
+    );
+    expect(
+      await screen.findByText(/today · 10:00 focused · 1 sessions/i),
+    ).toBeVisible();
+    expect(screen.getByText(/this week · 10:00 focused/i)).toBeVisible();
   });
 
   test("setup has five steps and music can be skipped explicitly", async () => {
@@ -262,6 +340,24 @@ describe("Phase 2 vertical flow", () => {
       screen.getByRole("button", { name: /save default duration/i }),
     );
     expect(mocks.save).toHaveBeenCalledWith("default_duration_seconds", "2700");
+    expect(screen.getByText("diagnostic-test-1234")).toBeVisible();
+    const unhealthy = base({
+      health: [
+        {
+          component: "Browser",
+          status: "unhealthy",
+          lastChecked: 2,
+          detail: "Simulated preflight failure",
+        },
+      ],
+    });
+    mocks.unhealthy.mockResolvedValue(unhealthy);
+    await user.click(
+      screen.getByRole("button", {
+        name: /simulate unhealthy browser health/i,
+      }),
+    );
+    expect(await screen.findByText(/browser: unhealthy/i)).toBeVisible();
     await user.click(
       screen.getByRole("button", { name: /rerun simulated health checks/i }),
     );

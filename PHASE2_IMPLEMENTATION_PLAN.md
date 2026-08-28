@@ -651,16 +651,16 @@ the visible simulated label until the production extension is paired and healthy
 The final Phase 2 acceptance run records:
 
 ```text
-Vitest                                     PASS (8 UI tests)
-Node contract/reviewer suite               PASS after handoff reconciliation
+Vitest                                     PASS (10 UI tests)
+Node contract/reviewer suite               PASS (8 tests)
 TypeScript, ESLint, Vite, Prettier         PASS
-Rust unit + reviewer tests                 PASS (22 executed; 1 hardware test ignored by default)
+Rust unit + reviewer tests                 PASS (23 executed; 1 hardware test ignored by default)
 Strict Clippy and rustfmt                   PASS
 Production Rodio MP3/live-output smoke     PASS (explicit hardware test)
 P1-22 static extension regression          PASS
 P1-23 local-audio regression               PASS (5 checks)
-nix flake check --no-build --all-systems   PASS (x86_64 + aarch64 evaluation)
-nix build .#checks.x86_64-linux.default    PASS
+nix flake check --all-systems              PASS (evaluation + full local hermetic build)
+default + browser-native-host outputs      PASS (manifest path inspected)
 Niri/Wayland launch and single instance    PASS
 Visual-state capture                       PASS (14 approved UI states)
 ```

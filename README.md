@@ -28,6 +28,8 @@ No global npm package is required. `flake.lock`, `Cargo.lock`, and
 `package-lock.json` pin the build inputs. Build the Nix package with
 `nix build`; it installs the `deepify` desktop executable plus the
 `com.deepify.browser` native-host helper and manifest.
+Use `nix build .#browser-native-host` when only the helper and Firefox native
+messaging manifest are needed.
 
 The Rust backend in `apps/desktop/src-tauri` is authoritative for session state,
 audio, and storage. React is a presentation layer over typed Tauri commands.

@@ -7,7 +7,9 @@ backend owns the session state machine and local SQLite data. It includes the
 five-step setup wizard, Focus Room lifecycle, failure summaries, history,
 whitelist management, settings and themes, local MP3 import/playback, folder
 watching and deterministic rescans, completion notifications, startup recovery,
-and single-instance behavior.
+and single-instance behavior. Whitelist probes are evaluated locally without
+being saved; history reports daily and weekly totals; local diagnostic IDs
+correlate user-visible failures without recording sensitive content.
 
 ## Verified deliverable
 
@@ -20,12 +22,15 @@ and single-instance behavior.
 - Parameterized SQLite migrations and repositories for every Phase 2 table,
   including the database constraint allowing only one active session.
 - Separate browser, application, and Do Not Disturb adapter traits with mock
-  failure injection and honest partial-cleanup reporting.
+  health/latency configuration, failure injection, observable repair, and honest
+  partial-cleanup reporting.
 - All approved desktop states plus the packaged extension blocked-page preview;
   the UI persistently labels restriction protection as simulated.
 - Production MP3 decode/control through the live system output, ID3 and filename
   metadata fallback, recursive sources, persistent queue order, and nonfatal
   missing-file/device states.
+- A user-triggered output retry drops the stale sink and opens the current
+  default/new output device without interrupting the focus session.
 - Hermetic Nix package/check build and native Niri/Wayland launch. The window is
   fixed at 960×720 to avoid a known GTK3/WebKitGTK resize defect under current
   Wayland tiling compositors.

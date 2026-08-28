@@ -10,9 +10,10 @@ blocked-page UI.
 Restriction behavior remains simulated. The preview does not claim live browser
 interception or restoration.
 
-To regenerate the 1440×1000 images, serve the built frontend on
-`127.0.0.1:4173`, then run:
+To regenerate the 1440×1000 images, serve the development frontend (the demo
+provider is development-only) on `127.0.0.1:4173`, then run:
 
 ```sh
+npm exec --workspace @deepify/desktop -- vite --host 127.0.0.1 --port 4173
 node scripts/capture-phase2-screens.mjs
 ```

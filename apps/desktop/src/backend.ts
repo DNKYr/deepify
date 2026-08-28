@@ -66,6 +66,7 @@ export type Playback = {
   output?: string;
 };
 export type AppSnapshot = {
+  diagnosticId: string;
   session: SessionSnapshot;
   settings: Settings;
   health: Health[];
@@ -77,6 +78,10 @@ export type AppSnapshot = {
   blockedApps: string[];
   summary?: SessionSummary;
 };
+export type WhitelistTestResult = {
+  allowed: boolean;
+  detail: string;
+};
 
 const demoState =
   import.meta.env.DEV && typeof window !== "undefined"
@@ -85,6 +90,7 @@ const demoState =
 
 const visualSnapshot = (): AppSnapshot => {
   const snapshot: AppSnapshot = {
+    diagnosticId: "demo-local-0001",
     session: {
       state: "not_working",
       remainingSeconds: 0,
@@ -146,7 +152,7 @@ const visualSnapshot = (): AppSnapshot => {
         blockedAttempts: 3,
         reason: "completed",
         cleanupComplete: true,
-        startedAt: 1,
+        startedAt: Math.floor(Date.now() / 1000) - 3600,
         intention: "Write the launch brief",
       },
     ],
@@ -222,11 +228,22 @@ export const addWhitelist = (kind: WhitelistItem["kind"], value: string) =>
   request<AppSnapshot>("add_whitelist", { kind, value });
 export const removeWhitelist = (id: string) =>
   request<AppSnapshot>("remove_whitelist", { id });
+export const testWhitelist = (kind: WhitelistItem["kind"], value: string) =>
+  visualDemoSnapshot
+    ? Promise.resolve({
+        allowed: value.includes("docs.example.com"),
+        detail: value.includes("docs.example.com")
+          ? "Allowed by the current local configuration"
+          : "Would be blocked by the current local configuration",
+      } satisfies WhitelistTestResult)
+    : invoke<WhitelistTestResult>("test_whitelist", { kind, value });
 export const importMusicFiles = () =>
   request<AppSnapshot>("import_music_files");
 export const importMusicFolder = () =>
   request<AppSnapshot>("import_music_folder");
 export const audioToggle = () => request<AppSnapshot>("audio_toggle");
+export const audioRetryOutput = () =>
+  request<AppSnapshot>("audio_retry_output");
 export const audioPrevious = () => request<AppSnapshot>("audio_previous");
 export const audioNext = () => request<AppSnapshot>("audio_next");
 export const audioSetVolume = (volume: number) =>
@@ -242,6 +259,8 @@ export const simulateRuntimeFailure = () =>
 export const rerunSetup = () => request<AppSnapshot>("rerun_setup");
 export const repairIntegrations = () =>
   request<AppSnapshot>("repair_integrations");
+export const simulateUnhealthyIntegration = () =>
+  request<AppSnapshot>("simulate_unhealthy_integration");
 export const onSnapshotChanged = (callback: (snapshot: AppSnapshot) => void) =>
   demoState
     ? Promise.resolve(() => undefined)

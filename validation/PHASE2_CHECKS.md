@@ -6,19 +6,19 @@ Date: 2026-08-28. Target: NixOS, Niri, Wayland. Restriction adapters are mocks.
 
 | Gate | Result |
 | --- | --- |
-| `npm test` | PASS — 8 Vitest UI tests plus 7 Node contract/reviewer tests |
+| `npm test` | PASS — 10 Vitest UI tests plus 8 Node contract/reviewer tests |
 | `npm run typecheck` | PASS — real `tsc --noEmit` |
 | `npm run lint` | PASS — real ESLint |
 | `npm run build` | PASS — Vite production bundle with embedded Tauri assets |
 | `npm run format:check` | PASS — Prettier |
-| `cargo test -p deepify-desktop --features custom-protocol --locked --offline` | PASS — 22 tests; the live-output test is ignored by default |
+| `cargo test --workspace --locked --offline` | PASS — 23 tests; the live-output test is ignored by default |
 | `cargo clippy -p deepify-desktop --features custom-protocol --all-targets --locked --offline -- -D warnings` | PASS |
 | `cargo fmt --all -- --check` | PASS |
 | production Rodio test with `DEEPIFY_AUDIO_FIXTURE=/tmp/deepify-rodio-fixture.mp3` and `--ignored` | PASS — decoded and controlled a real MP3 through the live PipeWire output |
 | `node validation/p1-22-firefox-spike/test/static-test.js` | PASS |
 | `npm --prefix validation/p1-23-local-audio-spike test` | PASS — 5 checks |
-| `nix flake check --no-build --all-systems` | PASS — x86_64 and aarch64 outputs evaluate |
-| `nix build .#checks.x86_64-linux.default --no-link` | PASS — full hermetic package/check derivation |
+| `nix flake check --all-systems` | PASS — x86_64/aarch64 evaluation plus the full local hermetic package/check derivation |
+| `nix build .#default .#browser-native-host --no-link` plus manifest inspection | PASS — desktop/helper outputs contain the native host manifest with an absolute executable path |
 | `npm audit --audit-level=moderate` | PASS — 0 vulnerabilities before the final source-only patches; no dependency changed afterward |
 
 Rust storage coverage uses temporary rusqlite databases and exercises migration
@@ -26,6 +26,9 @@ reopen, repository CRUD, invalid values, the one-active-session constraint,
 abandoned-session recovery, queue/music persistence, and atomic whitelist
 validation. Fake-clock tests cover start, pause, resume, completion, early end,
 runtime failure, cleanup failure, and recovery.
+Configurable-latency mock-adapter coverage and UI tests additionally verify
+observable unhealthy-to-repaired health, a non-persistent whitelist probe,
+daily/weekly totals, diagnostic IDs, and end-dialog focus restoration.
 
 ## Runtime and visual checks
 
@@ -81,7 +84,7 @@ the explicit Phase 2 adapter, not that enforcement exists.
 | Play optional local MP3 without internet | PASS |
 | Prefer ID3, then documented filename fallbacks | PASS |
 | Recursively rescan folders and reconcile the queue deterministically | PASS |
-| Show device loss and recover playback | State/adapter PASS; real switch deferred | Live PipeWire switch |
+| Show device loss and recover playback | Visible state + default-device retry PASS; real switch deferred | Live PipeWire unplug/replug |
 | Require no account/sign-in | PASS |
 | Use the minimal Obsidian-inspired default UI | PASS |
 | Persist the selected color scheme | PASS |

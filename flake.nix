@@ -20,8 +20,7 @@
             openssl
             webkitgtk_4_1
           ];
-        in {
-          default = pkgs.rustPlatform.buildRustPackage {
+          basePackage = pkgs.rustPlatform.buildRustPackage {
             pname = "deepify";
             version = "0.1.0";
             src = self;
@@ -58,6 +57,27 @@
               cargo clippy --workspace --all-targets --features deepify-desktop/custom-protocol -- -D warnings
             '';
           };
+          nativeManifest = pkgs.runCommand "deepify-native-host-manifest-0.1.0" { } ''
+            install -Dm644 ${./extensions/firefox/native-manifest.json} \
+              $out/lib/mozilla/native-messaging-hosts/com.deepify.browser.json
+            substituteInPlace \
+              $out/lib/mozilla/native-messaging-hosts/com.deepify.browser.json \
+              --replace-fail '"path": "deepify-browser-native-host"' \
+                '"path": "${basePackage}/bin/deepify-browser-native-host"'
+          '';
+          browserNativeHost = pkgs.runCommand "deepify-browser-native-host-0.1.0" { } ''
+            mkdir -p $out/bin $out/lib/mozilla/native-messaging-hosts
+            ln -s ${basePackage}/bin/deepify-browser-native-host \
+              $out/bin/deepify-browser-native-host
+            ln -s ${nativeManifest}/lib/mozilla/native-messaging-hosts/com.deepify.browser.json \
+              $out/lib/mozilla/native-messaging-hosts/com.deepify.browser.json
+          '';
+        in {
+          default = pkgs.symlinkJoin {
+            name = "deepify-0.1.0";
+            paths = [ basePackage nativeManifest ];
+          };
+          browser-native-host = browserNativeHost;
         });
       devShells = eachSystem (pkgs: {
         default = pkgs.mkShell {

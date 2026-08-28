@@ -98,6 +98,33 @@ test('P2-06 through P2-10 expose every prototype screen and production audio bou
   assert.match(architecture, /Phase 2 audio adapter decision/i);
 });
 
+test('P2-05 through P2-10 close health, simulation, history, accessibility, and diagnostics gaps', async () => {
+  const domain = await read('apps/desktop/src-tauri/src/lib.rs');
+  const runtime = await read('apps/desktop/src-tauri/src/main.rs');
+  const ui = await read('apps/desktop/src/App.tsx');
+  for (const pattern of [
+    /pub latency: Duration/,
+    /thread::sleep\(self\.latency\)/,
+    /configurable_mock_latency_applies_to_each_adapter_step/,
+  ]) assert.match(domain, pattern);
+  for (const command of [
+    'test_whitelist',
+    'simulate_unhealthy_integration',
+    'repair_integrations',
+    'audio_retry_output',
+  ]) assert.match(runtime, new RegExp(command));
+  assert.match(runtime, /diagnostic_id/);
+  assert.match(runtime, /restriction\.browser\.healthy\(\)/);
+  for (const pattern of [
+    /This week/,
+    /Test current configuration/,
+    /This test is local and is not saved/,
+    /Local diagnostic ID/,
+    /aria-describedby="end-description"/,
+    /event\.key === "Escape"/,
+  ]) assert.match(ui, pattern);
+});
+
 test('P2-11 does not claim completion while required Phase 2 gates remain open', async () => {
   const handoff = await read('PHASE2_HANDOFF.md');
   assert.doesNotMatch(handoff, /Tauri and rusqlite dependency installation.*remain open/i);

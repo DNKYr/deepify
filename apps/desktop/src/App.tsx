@@ -1,10 +1,11 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Route, Routes, useNavigate } from "react-router-dom";
 import {
   addWhitelist,
   appSnapshot,
   audioNext,
   audioPrevious,
+  audioRetryOutput,
   audioSetVolume,
   audioToggle,
   completeSetup,
@@ -24,13 +25,17 @@ import {
   simulateBlockedAttempt,
   simulateBlockedApp,
   simulateRuntimeFailure,
+  simulateUnhealthyIntegration,
+  testWhitelist,
   type AppSnapshot,
   type SessionSummary,
+  type WhitelistTestResult,
   visualDemoSnapshot,
 } from "./backend";
 import { SetupWizard } from "./SetupWizard";
 
 const empty: AppSnapshot = {
+  diagnosticId: "loading",
   session: {
     state: "not_working",
     remainingSeconds: 0,
@@ -219,6 +224,14 @@ function FocusRoom({
       : null;
   const [ending, setEnding] = useState(visualState === "ending");
   const [validating, setValidating] = useState(visualState === "validation");
+  const endTrigger = useRef<HTMLButtonElement>(null);
+  const keepWorking = useRef<HTMLButtonElement>(null);
+  const wasEnding = useRef(ending);
+  useEffect(() => {
+    if (ending) keepWorking.current?.focus();
+    else if (wasEnding.current) endTrigger.current?.focus();
+    wasEnding.current = ending;
+  }, [ending]);
   const session = snapshot.session;
   const planned = Number(duration) * 60;
   const valid = Number.isFinite(planned) && planned > 0;
@@ -235,7 +248,7 @@ function FocusRoom({
       );
     } catch {
       report(
-        "Pre-session validation failed. Review simulated integration health.",
+        `Pre-session validation failed. Review simulated integration health. Diagnostic ID: ${snapshot.diagnosticId}`,
       );
     } finally {
       setValidating(false);
@@ -303,7 +316,9 @@ function FocusRoom({
           >
             {session.state === "paused" ? "Resume" : "Pause"}
           </button>
-          <button onClick={() => setEnding(true)}>End session</button>
+          <button ref={endTrigger} onClick={() => setEnding(true)}>
+            End session
+          </button>
         </div>
         <section aria-label="Sound">
           <h3>Sound</h3>
@@ -349,11 +364,18 @@ function FocusRoom({
             </label>
           </div>
           {snapshot.playback.health !== "ready" && (
-            <p className="warning" role="status">
-              {snapshot.playback.health === "waiting_for_output_device"
-                ? "Waiting for an output device — focus continues without music."
-                : "The selected MP3 is unavailable — focus continues without music."}
-            </p>
+            <div className="warning" role="status">
+              <p>
+                {snapshot.playback.health === "waiting_for_output_device"
+                  ? "Waiting for an output device — focus continues without music."
+                  : "The selected MP3 is unavailable — focus continues without music."}
+              </p>
+              {snapshot.playback.health === "waiting_for_output_device" && (
+                <button onClick={async () => update(await audioRetryOutput())}>
+                  Retry current output device
+                </button>
+              )}
+            </div>
           )}
         </section>
         <section>
@@ -370,11 +392,22 @@ function FocusRoom({
             role="dialog"
             aria-modal="true"
             aria-labelledby="end-title"
+            aria-describedby="end-description"
             className="dialog"
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setEnding(false);
+              }
+            }}
           >
             <h3 id="end-title">End this session early?</h3>
-            <p>No reason is required. Cleanup begins immediately.</p>
-            <button onClick={() => setEnding(false)}>Keep working</button>
+            <p id="end-description">
+              No reason is required. Cleanup begins immediately.
+            </p>
+            <button ref={keepWorking} onClick={() => setEnding(false)}>
+              Keep working
+            </button>
             <button
               className="danger"
               onClick={async () => update(await sessionEnd())}
@@ -525,6 +558,8 @@ function Whitelist({
 }: PageProps & { report: (value: string) => void }) {
   const [kind, setKind] = useState<"application" | "website">("website");
   const [draft, setDraft] = useState("");
+  const [testDraft, setTestDraft] = useState("");
+  const [testResult, setTestResult] = useState<WhitelistTestResult>();
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     try {
@@ -532,7 +567,7 @@ function Whitelist({
       setDraft("");
     } catch {
       report(
-        "Enter a valid domain, IP address, path, or Niri app ID. Nothing was saved.",
+        `Enter a valid domain, IP address, path, or Niri app ID. Nothing was saved. Diagnostic ID: ${snapshot.diagnosticId}`,
       );
     }
   };
@@ -583,22 +618,61 @@ function Whitelist({
         <strong>Unidentified app — allowed in MVP</strong>. Private windows and
         unmonitored profiles may bypass simulated protection.
       </p>
-      <button>Test configuration</button>
+      <h3>Test current configuration</h3>
+      <label>
+        Website or application to test
+        <input
+          value={testDraft}
+          onChange={(event) => {
+            setTestDraft(event.target.value);
+            setTestResult(undefined);
+          }}
+        />
+      </label>
+      <button
+        disabled={!testDraft.trim()}
+        onClick={async () =>
+          setTestResult(await testWhitelist(kind, testDraft.trim()))
+        }
+      >
+        Test configuration
+      </button>
+      {testResult && (
+        <p role="status">
+          <strong>{testResult.allowed ? "Allowed" : "Blocked"}</strong> —{" "}
+          {testResult.detail}. This test is local and is not saved.
+        </p>
+      )}
     </section>
   );
 }
 
 function History({ snapshot }: { snapshot: AppSnapshot }) {
-  const total = useMemo(
-    () => snapshot.history.reduce((sum, item) => sum + item.focusedSeconds, 0),
-    [snapshot.history],
-  );
+  const totals = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const week = new Date(today);
+    week.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+    return snapshot.history.reduce(
+      (result, item) => {
+        const started = item.startedAt * 1000;
+        if (started >= week.getTime()) result.week += item.focusedSeconds;
+        if (started >= today.getTime()) {
+          result.today += item.focusedSeconds;
+          result.todaySessions += 1;
+        }
+        return result;
+      },
+      { today: 0, week: 0, todaySessions: 0 },
+    );
+  }, [snapshot.history]);
   return (
     <section className="card">
       <h2>Session History</h2>
       <p>
-        Today · {time(total)} focused · {snapshot.history.length} sessions
+        Today · {time(totals.today)} focused · {totals.todaySessions} sessions
       </p>
+      <p>This week · {time(totals.week)} focused</p>
       {snapshot.history.length ? (
         <table>
           <thead>
@@ -638,6 +712,9 @@ function Settings({ snapshot, update }: PageProps) {
   return (
     <section className="card">
       <h2>Settings</h2>
+      <p>
+        Local diagnostic ID: <code>{snapshot.diagnosticId}</code>
+      </p>
       <h3>Integration health</h3>
       <ul>
         {snapshot.health.map((item) => (
@@ -648,6 +725,11 @@ function Settings({ snapshot, update }: PageProps) {
       </ul>
       <button onClick={async () => update(await repairIntegrations())}>
         Rerun simulated health checks
+      </button>
+      <button
+        onClick={async () => update(await simulateUnhealthyIntegration())}
+      >
+        Simulate unhealthy browser health
       </button>
       <h3>Focus defaults</h3>
       <form
