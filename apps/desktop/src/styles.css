@@ -70,7 +70,8 @@ a:focus-visible {
   outline-offset: 2px;
 }
 .app-shell {
-  width: min(1120px, calc(100% - 40px));
+  width: 1120px;
+  max-width: calc(100vw - 40px);
   margin: 0 auto;
   min-height: 100vh;
   padding: 28px 0;
@@ -159,7 +160,8 @@ p {
 }
 .card label,
 .card form {
-  width: min(500px, 100%);
+  width: 100%;
+  max-width: 500px;
   display: flex;
   flex-direction: column;
   gap: 7px;
@@ -208,7 +210,8 @@ p {
   padding: 9px;
 }
 .setup {
-  width: min(760px, calc(100% - 40px));
+  width: 760px;
+  max-width: calc(100vw - 40px);
   margin: 40px auto;
 }
 .center {
