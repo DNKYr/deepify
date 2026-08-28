@@ -43,10 +43,10 @@ Validated on 2026-08-26 in the NixOS development environment:
 | Persist queue and define source changes | PASS | `reconcileQueue` assertions and documented policy above |
 | Handle output-device changes | PARTIAL | Device-loss/recovery state contract passes; no PipeWire output device is available in this headless run |
 
-The native playback smoke test demonstrates that MP3 decoding is available on the
-target machine, but not that a Tauri WebView or a Rust audio crate is the final choice.
-Implementation should use the Tauri file dialog for selection, persist the references
-and queue in the app's local store, and keep playback behind an adapter. The adapter
-must expose output-device loss and re-selection as an explicit health state. A real
-device-switch test remains an implementation/release test on a running PipeWire
-session.
+The original native playback smoke test demonstrated that MP3 decoding was available
+on the target machine but did not select the production Rust adapter.
+
+Phase 2 subsequently implemented Rodio with Symphonia MP3 decoding, `id3` metadata,
+and `notify` folder watching behind `AudioEngine`. On 2026-08-28 its explicit
+ignored-by-default production test decoded and controlled a generated MP3 through the
+live PipeWire output. A real device-loss/switch/recovery event remains a release test.

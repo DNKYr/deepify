@@ -2,9 +2,9 @@
 
 ## Status
 
-- **Stage:** Phase 1 complete; Phase 2 functional prototype planning
+- **Stage:** Phase 1 complete; Phase 2 functional prototype complete
 - **Document type:** Living design document
-- **Last updated:** 2026-08-26
+- **Last updated:** 2026-08-28
 
 This document captures the current product direction. Decisions and details will be revised incrementally as the design develops. Phase 1 decisions, approved wireframes, and acceptance criteria are recorded in [`PHASE1_ISSUES.md`](PHASE1_ISSUES.md). Production boundaries and Phase 2 work are defined in [`ARCHITECTURE.md`](ARCHITECTURE.md) and [`PHASE2_IMPLEMENTATION_PLAN.md`](PHASE2_IMPLEMENTATION_PLAN.md).
 
@@ -288,9 +288,15 @@ Gentle and Strict modes may be designed after the Standard-mode MVP is validated
 
 ## 8. Next Work
 
-Phase 1 product definition is complete. The Phase 2 architecture and work breakdown are documented in [`ARCHITECTURE.md`](ARCHITECTURE.md) and [`PHASE2_IMPLEMENTATION_PLAN.md`](PHASE2_IMPLEMENTATION_PLAN.md). Phase 2 builds the approved desktop flow with simulated restriction integrations before Phase 3 and Phase 4 connect real enforcement.
+Phase 2 is complete. The runnable desktop prototype implements the approved flow,
+local persistence, production local MP3 playback, notifications, recovery, and
+explicitly simulated restriction adapters. Verification and the P1-24 prototype
+mapping are recorded in [`validation/PHASE2_CHECKS.md`](validation/PHASE2_CHECKS.md).
 
-P2-01 is ready for Codex implementation. The product name is **Deepify**, the normalized desktop executable is `deepify`, and the nixpkgs release target is 26.05. Remaining P2-01 identifiers and exact tool versions still need to be pinned. Implementation follow-ups include P1-12 crash recovery, real PipeWire device switching, production Tauri audio integration, and collecting the target window inventory for the tentative P1-10 system-component allowlist.
+Next work is Phase 3 production browser integration behind the existing adapter
+and native-host contracts, followed by Phase 4 Niri/Noctalia integration. Release
+follow-ups remain hard-crash and lifecycle validation, real PipeWire device
+switching, signed browser installation, and the target system-component inventory.
 
 ---
 
@@ -300,7 +306,9 @@ P2-01 is ready for Codex implementation. The product name is **Deepify**, the no
 
 - **Decision:** The MVP product name is **Deepify**.
 - **Decision:** The desktop executable uses the normalized lowercase name `deepify`.
-- **Toolchain baseline:** Target the nixpkgs 26.05 release; the exact flake revision remains to be locked by P2-01.
+- **Toolchain baseline:** nixpkgs 26.05 is locked at `f4f698677b11021a8f84f452e23ae9ef2427bec3`.
+- **Permanent identifiers:** Tauri `com.deepify.desktop`, native host
+  `com.deepify.browser`, Firefox extension `focus@deepify.local`.
 
 ### 2026-08-25 — Initial operating system
 

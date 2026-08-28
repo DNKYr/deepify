@@ -1,21 +1,38 @@
 # Deepify
 
-Deepify is a local-only focus timer prototype. Phase 2 restriction adapters are
-explicitly simulated; Firefox, Niri, Noctalia, and real process/window
-enforcement are Phase 3/4 work.
+Deepify is a local-only Tauri focus-room prototype for NixOS. Phase 2 implements
+the complete desktop session lifecycle, SQLite persistence, whitelist and setup
+flows, local MP3 playback, recovery behavior, notifications, and deterministic
+tests. Firefox, Niri, and Noctalia restriction adapters remain unmistakably
+simulated; real enforcement is Phase 3/4 work.
 
-## Development
+## Develop and verify
 
 ```sh
 nix develop
-cargo test --workspace
-cargo fmt --all --check
+npm ci
+npm run dev
+
 npm test
 npm run typecheck
 npm run lint
+npm run build
+npm run format:check
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --all --check
+nix flake check
 ```
 
-The Tauri-facing application boundary is in `apps/desktop`; the backend owns
-session state and persistence. The current environment must have a usable Nix
-registry to run `nix flake check`; absence is recorded as an unavailable
-platform check, not silently substituted.
+No global npm package is required. `flake.lock`, `Cargo.lock`, and
+`package-lock.json` pin the build inputs. Build the Nix package with
+`nix build`; it installs the `deepify` desktop executable plus the
+`com.deepify.browser` native-host helper and manifest.
+
+The Rust backend in `apps/desktop/src-tauri` is authoritative for session state,
+audio, and storage. React is a presentation layer over typed Tauri commands.
+Application data is stored locally under Tauri's `com.deepify.desktop` data
+directory; the product has no account, analytics, or cloud service.
+
+See `PHASE2_HANDOFF.md` and `validation/PHASE2_CHECKS.md` for the verified scope,
+known platform limits, and Phase 3/4 backlog.

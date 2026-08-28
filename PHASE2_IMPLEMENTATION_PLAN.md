@@ -2,7 +2,7 @@
 
 ## Status
 
-- **Stage:** Planning
+- **Stage:** Complete — functional prototype accepted on 2026-08-28
 - **Depends on:** Approved Phase 1 design and acceptance criteria
 - **Architecture:** [`ARCHITECTURE.md`](ARCHITECTURE.md)
 - **Goal:** Build a local desktop prototype of the approved UX and complete session lifecycle using simulated restriction integrations
@@ -59,7 +59,13 @@ Every milestone must leave the application runnable and tests passing.
 ## P2-01 — Resolve bootstrap identifiers and pin the toolchain
 
 **Priority:** Critical  
-**Status:** In progress — identifiers and source scaffold recorded; immutable lock validation blocked by truncated network fetch.
+**Status:** Complete — permanent identifiers and immutable Nix/Cargo/npm toolchain inputs are committed and validated.
+
+### Completion evidence
+
+`tests/reviewer_acceptance.test.mjs` validates the immutable flake revision/hash
+and all three identifiers. `nix develop` and
+`nix flake check --no-build --all-systems` pass from the committed locks.
 
 ### Resolved inputs
 
@@ -67,14 +73,16 @@ Every milestone must leave the application runnable and tests passing.
 - Desktop executable name: `deepify`
 - nixpkgs release baseline: 26.05
 
-### Remaining decisions and validation
+### Resolved decisions and validation
 
-- Exact locked nixpkgs 26.05 revision
-- Reverse-DNS Tauri identifier
-- Browser native-host ID
-- Firefox extension ID namespace
-- Pinned Rust, Node, Tauri, and plugin versions compatible with the locked nixpkgs revision
-- Generated TypeScript binding approach after compatibility testing
+- nixpkgs 26.05 revision: `f4f698677b11021a8f84f452e23ae9ef2427bec3`
+- Reverse-DNS Tauri identifier: `com.deepify.desktop`
+- Browser native-host ID: `com.deepify.browser`
+- Firefox extension ID: `focus@deepify.local`
+- Rust and Node come from the locked nixpkgs revision; Tauri Rust is pinned to
+  2.11.5 and the frontend CLI to 2.5.0, with every plugin/npm dependency locked.
+- Phase 2 uses a checked-in typed TypeScript command boundary rather than adding
+  `tauri-specta`; Rust reviewer tests guard the cross-boundary behavior.
 
 ### Deliverables
 
@@ -95,7 +103,14 @@ Every milestone must leave the application runnable and tests passing.
 ## P2-02 — Create the Tauri/React production scaffold
 
 **Priority:** Critical  
-**Status:** In progress — Tauri configuration, React/Vite shell, semantic themes, and single-instance configuration recorded; Tauri dependency installation remains blocked by unavailable crates.io.
+**Status:** Complete — the production scaffold, quality toolchain, Niri/Wayland launch, and single-instance behavior are validated.
+
+### Completion evidence
+
+`npm run typecheck`, `npm run lint`, `npm run build`, `npm run format:check`,
+Rust test/Clippy/rustfmt, and the full Nix package build pass. The packaged binary
+loaded embedded assets under Niri/Wayland; a second launch did not create a
+second process/window.
 
 ### Tasks
 
@@ -126,7 +141,13 @@ Every milestone must leave the application runnable and tests passing.
 ## P2-03 — Implement domain types and SQLite migrations
 
 **Priority:** Critical  
-**Status:** In progress — migration SQL, SQLite adapter boundary, domain DTOs, and repository tests recorded; rusqlite integration remains blocked by unavailable crates.io.
+**Status:** Complete — embedded rusqlite migrations, repositories, DTOs, constraints, and temporary-database tests are implemented.
+
+### Completion evidence
+
+`cargo test -p deepify-desktop --features custom-protocol --locked --offline`
+passes migration reopen, repository CRUD, malformed-value, queue/music,
+abandoned-session, and one-active-session tests against temporary databases.
 
 ### Tasks
 
@@ -169,7 +190,13 @@ Every milestone must leave the application runnable and tests passing.
 ## P2-04 — Implement the backend session engine
 
 **Priority:** Critical  
-**Status:** Completed for deterministic domain scope; Tauri command persistence/event wiring remains pending and platform validation is not claimed.
+**Status:** Complete — deterministic domain behavior, persistence/checkpoints, Tauri commands, and snapshot events are wired and tested.
+
+### Completion evidence
+
+The Rust suite passes fake-clock start/pause/resume/completion/early-end,
+duplicate-command, runtime-failure, persistence, and recovery cases. The reviewer
+test independently verifies focused and paused time remain separate.
 
 ### Tasks
 
@@ -210,7 +237,13 @@ Every milestone must leave the application runnable and tests passing.
 ## P2-05 — Add mock restriction and health adapters
 
 **Priority:** Critical  
-**Status:** Completed for simulated adapter contract; Tauri command/event wiring and real integration remain Phase 3/4 work.
+**Status:** Complete — all three simulated adapter boundaries, coordinator ordering, health snapshots, and failure injection are wired; real integrations remain Phase 3/4 work.
+
+### Completion evidence
+
+Rust failure-injection tests cover every activation and cleanup position,
+best-effort reverse cleanup, incomplete-cleanup reporting, and recovery gating.
+The UI and setup tests assert the persistent simulated-protection language.
 
 ### Tasks
 
@@ -241,7 +274,14 @@ Inject a failure at every startup and cleanup step and assert:
 ## P2-06 — Build the vertical Focus Room flow
 
 **Priority:** Critical  
-**Status:** Completed for the mock vertical UI state/copy flow; full Testing Library/Vitest integration and backend Tauri command registration remain pending.
+**Status:** Complete — the vertical flow is backed by Tauri commands, persisted snapshots, and Testing Library/Vitest coverage.
+
+### Completion evidence
+
+Eight Testing Library/Vitest cases cover required duration, active/paused state,
+blocked-app resolution, early-end confirmation and summary, setup, Settings,
+accessible names, and keyboard order. The 01–09 and 13 visual captures cover the
+approved lifecycle states.
 
 ### Screens
 
@@ -288,7 +328,14 @@ A user can complete the entire approved session flow with mock integrations, clo
 ## P2-07 — Implement whitelist rules and management
 
 **Priority:** High  
-**Status:** Completed for domain and shared-contract scope; management command/UI wiring remains pending.
+**Status:** Complete — CRUD, atomic validation, active-session locking, management UI, and shared Rust/TypeScript URL fixtures are implemented.
+
+### Completion evidence
+
+The Rust reviewer suite and `contracts/test/url-rules.test.mjs` execute the shared
+vectors, including subdomains, path prefixes, ports, schemes, IPv4/IPv6 loopback,
+private networks, and public IPs. UI tests retain invalid draft input after an
+atomic rejection.
 
 ### Application rules
 
@@ -332,7 +379,13 @@ Create `contracts/url-rule-cases.json` now. The same fixtures must later run in 
 ## P2-08 — Implement setup, Settings, and integration health
 
 **Priority:** High  
-**Status:** In progress — settings persistence primitives and rerunnable setup state are present; five-step wizard and health screens remain pending.
+**Status:** Complete — five-step setup, optional music, persistent settings/themes, health disclosure, and rerun behavior are implemented.
+
+### Completion evidence
+
+Vitest drives all five setup steps, explicit music skip, default-duration save,
+and simulated health repair. Temporary-database tests cover settings persistence;
+the Settings and setup visual captures verify both themes and disclosures.
 
 ### Tasks
 
@@ -358,7 +411,13 @@ Create `contracts/url-rule-cases.json` now. The same fixtures must later run in 
 ## P2-09 — Integrate production local MP3 support
 
 **Priority:** High  
-**Status:** Completed for library/queue contract scope; production decoder/device adapter and ID3 parsing remain pending.
+**Status:** Complete — production Rodio/Symphonia playback, ID3 metadata, Notify watchers, persistence, deterministic rescans, and device-health behavior are implemented.
+
+### Completion evidence
+
+The ignored-by-default production audio test passes with
+`DEEPIFY_AUDIO_FIXTURE=/tmp/deepify-rodio-fixture.mp3` against the live PipeWire
+output. The P1-23 five-check regression and storage/audio unit tests pass.
 
 ### Step 1: adapter selection spike
 
@@ -412,7 +471,14 @@ Select the smallest reliable implementation behind `AudioEngine`. Record the cho
 ## P2-10 — Recovery, robustness, and privacy pass
 
 **Priority:** Critical  
-**Status:** Pending — recovery tests exist for mock backend state; real crash/suspend/platform checks remain unperformed.
+**Status:** Complete for Phase 2 — deterministic mock recovery, local-only/privacy review, typed failures, single-instance behavior, and accessibility basics are validated; listed real-platform tests remain deferred.
+
+### Completion evidence
+
+Recovery and cleanup-failure Rust tests, the single-instance runtime check,
+keyboard-order UI test, reduced-motion/focus-visible CSS review, CSP/capability
+review, and local-data/network-request source audit pass. Deferred real-platform
+cases remain listed below and in the acceptance record.
 
 ### Tasks
 
@@ -446,7 +512,13 @@ Document—but do not falsely mark complete—the release tests requiring real i
 ## P2-11 — Phase 2 acceptance and handoff
 
 **Priority:** Critical  
-**Status:** Blocked — acceptance handoff records the implemented prototype, but dependency/toolchain and required platform gates cannot run in this environment.
+**Status:** Complete — automated gates, prototype acceptance mapping, visual states, limitations, and the Phase 3 browser backlog are recorded.
+
+### Completion evidence
+
+The complete command log and every P1-24 criterion are recorded in
+`validation/PHASE2_CHECKS.md`; `npm test` includes the independent reviewer suite,
+and images 01–14 cover the approved Phase 2 states without implying enforcement.
 
 ### Tasks
 
@@ -567,34 +639,48 @@ P2-07 and the initial P2-09 adapter spike can proceed in parallel after the stor
 
 ---
 
-## 8. Immediate Next Action
+## 8. Next Action
 
-Begin the Codex loop with P2-01. Incorporate its exact flake/toolchain validation and remaining identifier decisions before beginning P2-02. Do not scaffold Tauri until the reverse-DNS application identifier and native-host naming are chosen, because those values affect local data paths, desktop integration, browser manifests, and future upgrades.
+Begin Phase 3 by implementing the production browser adapter behind the existing
+`BrowserRestrictionAdapter` trait and `com.deepify.browser` native-host contract.
+Keep the shared URL fixtures and session-domain behavior unchanged, and retain
+the visible simulated label until the production extension is paired and healthy.
 
-## Implementation evidence — 2026-08-26
+## Implementation evidence — 2026-08-28
 
-### Sequencing note
-
-The initial shared-worktree pass committed the P2-07 contract before the P2-06
-evidence commit. This is a process deviation only; no P2-08/P2-09 production
-work was used to satisfy P2-06. The P2-06 follow-up below records the actual
-mock UI checks before later milestones are handed off.
-
-The following checks were run in the shared workspace:
+The final Phase 2 acceptance run records:
 
 ```text
-cargo fmt --all                         PASS
-cargo test --workspace --offline        PASS (14 backend tests)
-cargo clippy --workspace --all-targets --offline -- -D warnings  PASS
-npm test                                PASS (2 contract/UI source tests)
-npm run typecheck                       PASS (temporary source scan; real tsc awaits npm install)
-npm run lint                            PASS (temporary source scan; real ESLint awaits npm install)
-nix flake metadata ...                 BLOCKED: truncated tar archive while fetching nixpkgs
-cargo fetch                             BLOCKED: static.crates.io DNS unavailable
-npm install --package-lock-only        BLOCKED: registry unavailable; root lock has no resolved dependency graph
+Vitest                                     PASS (8 UI tests)
+Node contract/reviewer suite               PASS after handoff reconciliation
+TypeScript, ESLint, Vite, Prettier         PASS
+Rust unit + reviewer tests                 PASS (22 executed; 1 hardware test ignored by default)
+Strict Clippy and rustfmt                   PASS
+Production Rodio MP3/live-output smoke     PASS (explicit hardware test)
+P1-22 static extension regression          PASS
+P1-23 local-audio regression               PASS (5 checks)
+nix flake check --no-build --all-systems   PASS (x86_64 + aarch64 evaluation)
+nix build .#checks.x86_64-linux.default    PASS
+Niri/Wayland launch and single instance    PASS
+Visual-state capture                       PASS (14 approved UI states)
 ```
 
-These results do not constitute Phase 2 completion. The Tauri shell, real
-rusqlite adapter, production MP3 decoder, Testing Library suite, Nix check,
-real platform enforcement, and crash/suspend/device validation remain pending.
-Restriction behavior is explicitly simulated throughout the prototype.
+Representative milestone commits are retained in repository history:
+
+| Milestone | Evidence commits |
+| --- | --- |
+| P2-01 | `84149a9`, `467596b` |
+| P2-02 | `d87219e`, `cc258c4`, `5fffba3`, `0d80385` |
+| P2-03 | `49e3eed`, `969705b` |
+| P2-04 | `b4c2206`, `969705b` |
+| P2-05 | `0bd8024`, `969705b` |
+| P2-06 | `4cd7964`, `969705b` |
+| P2-07 | `65b0af5`, `299857e` |
+| P2-08 | `4eab6fe`, `5234800`, `96d5fa7` |
+| P2-09 | `5933d08`, `969705b` |
+| P2-10 | `08cd979`, `969705b` |
+| P2-11 | `f03bb15`, `66e939b`, plus the final acceptance/handoff commit |
+
+The detailed command log and P1-24 mapping are in
+[`validation/PHASE2_CHECKS.md`](validation/PHASE2_CHECKS.md). Real restriction
+enforcement and the deferred platform matrix remain explicitly outside Phase 2.

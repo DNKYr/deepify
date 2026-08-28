@@ -2,7 +2,7 @@
 
 ## Status
 
-- **Stage:** Approved Phase 1 product design; Phase 2 architecture baseline
+- **Stage:** Approved Phase 1 product design; Phase 2 implementation complete
 - **Target:** NixOS, Niri, and Wayland
 - **Application model:** Local-only Tauri desktop application with a Firefox extension
 - **Related documents:** [`DESIGN.md`](DESIGN.md), [`PHASE1_ISSUES.md`](PHASE1_ISSUES.md), and [`PHASE2_IMPLEMENTATION_PLAN.md`](PHASE2_IMPLEMENTATION_PLAN.md)
@@ -595,7 +595,7 @@ Development and tests must not depend on globally installed npm packages.
 
 1. Product display name: **Deepify**.
 2. Desktop executable name: `deepify` (normalized lowercase executable form of the product name).
-3. nixpkgs release baseline: 26.05; P2-01 must commit an exact locked revision.
+3. nixpkgs release baseline: 26.05, locked at `f4f698677b11021a8f84f452e23ae9ef2427bec3`.
 4. Tauri 2 + React/TypeScript + Rust.
 5. Rust backend is authoritative for sessions and persistence.
 6. SQLite is the structured local data store.
@@ -605,12 +605,16 @@ Development and tests must not depend on globally installed npm packages.
 10. Store aggregate blocked-attempt counts, not browsing history.
 11. Production audio is behind a Rust adapter.
 
-### Must be resolved during Phase 2 setup
+### Resolved during Phase 2
 
-1. Reverse-DNS Tauri identifier, native-host ID, and Firefox extension ID namespace.
-2. Exact nixpkgs 26.05 revision plus pinned Tauri/plugin, Rust, and Node versions supported by it.
-3. Final Rust audio libraries after a production-adapter spike.
-4. Whether generated TypeScript bindings use `tauri-specta` or a checked-in schema generator based on compatibility testing.
+1. Identifiers: Tauri `com.deepify.desktop`, native host
+   `com.deepify.browser`, Firefox extension `focus@deepify.local`.
+2. The exact nixpkgs revision and Cargo/npm dependency graphs are committed in
+   `flake.lock`, `Cargo.lock`, and `package-lock.json`.
+3. Production audio uses Rodio with Symphonia MP3 decoding, `id3` metadata, and
+   `notify` folder watching behind `AudioEngine`.
+4. Phase 2 uses a checked-in typed TypeScript command boundary; backend and
+   reviewer tests guard behavior without adding a binding generator.
 
 ### Later implementation follow-ups
 

@@ -1090,7 +1090,7 @@ Full spike evidence and reproduction instructions are in [`validation/p1-22-fire
 
 ## P1-23 — Local audio feasibility spike
 
-**Status:** Resolved for MVP feasibility; hardware device switching remains an implementation test
+**Status:** Resolved for feasibility and Phase 2 production playback; real hardware device switching remains a release-platform test
 **Category:** Technical feasibility  
 **Priority:** Medium
 
@@ -1118,13 +1118,18 @@ that remains an implementation/release test.
 ### Deliverable
 
 The MVP supports MP3 only. It stores direct file and live folder references plus the
-playback queue in local JSON/SQLite-equivalent application storage; audio is not copied
-into app storage. ID3 metadata is preferred with the documented filename fallback.
-Folder playlists are recursive and sorted by relative path. Missing individual files
-remain unavailable references. The production Tauri player must expose output-device
-loss as a health state and reselect the default/new device when one becomes available.
-Native playback was validated with the target machine's FFmpeg/VLC stack; Tauri WebView
-or Rust audio-crate integration still requires Phase 2 implementation testing.
+playback queue in local SQLite storage; audio is not copied into app storage. ID3
+metadata is preferred with the documented filename fallback. Folder playlists are
+recursive and sorted by relative path. Missing individual files remain unavailable
+references. The production Tauri player exposes device loss as a visible waiting state
+and can reopen the default output when one is available.
+
+### Phase 2 production follow-up — 2026-08-28
+
+The Rodio/Symphonia/ID3/Notify adapter passed an explicit ignored-by-default test
+that decoded and controlled a generated MP3 through the target machine's live
+PipeWire output. The P1-23 five-check regression also passed. A real device
+loss/switch/recovery event remains a release-platform test.
 
 ---
 
