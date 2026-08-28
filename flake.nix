@@ -37,8 +37,16 @@
             ];
             buildInputs = linuxLibraries;
             preBuild = "npm run build";
-            cargoBuildFlags = [ "--workspace" ];
-            cargoTestFlags = [ "--workspace" ];
+            cargoBuildFlags = [
+              "--workspace"
+              "--features"
+              "deepify-desktop/custom-protocol"
+            ];
+            cargoTestFlags = [
+              "--workspace"
+              "--features"
+              "deepify-desktop/custom-protocol"
+            ];
           };
         });
       devShells = eachSystem (pkgs: {

@@ -8,6 +8,9 @@ build = "build.rs"
 name = "deepify"
 path = "src/lib.rs"
 
+[features]
+custom-protocol = ["tauri/custom-protocol"]
+
 [dependencies]
 id3 = "1.17.0"
 notify = "8.2.0"
