@@ -1,1 +1,33 @@
-{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","required":["version","type"],"properties":{"version":{"const":1},"type":{"enum":["hello","pair","pair_result","heartbeat","heartbeat_ack","start_session","start_result","stop_session","stop_result","status","blocked_attempt","integration_error","restore_complete","restore_error"]},"request_id":{"type":"string","maxLength":128},"token":{"type":"string","maxLength":256}}}
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://deepify.local/contracts/browser-v1.json",
+  "title": "Deepify browser protocol v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "type", "message_id"],
+  "properties": {
+    "version": { "const": 1 },
+    "type": { "enum": ["hello", "pair", "pair_result", "heartbeat", "heartbeat_ack", "start_session", "start_result", "stop_session", "stop_result", "status", "state", "blocked_attempt", "integration_error", "restore_complete", "restore_error"] },
+    "message_id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\x00-\\x1F\\x7F]+$" },
+    "request_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "token": { "type": "string", "minLength": 43, "maxLength": 128 },
+    "extension_id": { "const": "focus@deepify.local" },
+    "browser_kind": { "enum": ["firefox", "zen"] },
+    "profile_label": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "capabilities": { "type": "array", "maxItems": 16, "items": { "enum": ["top_level_web_request", "tab_restore", "container_tabs"] }, "uniqueItems": true },
+    "session_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "timer_state": { "enum": ["working", "paused", "inactive"] },
+    "remaining_seconds": { "type": "integer", "minimum": 0, "maximum": 86400 },
+    "rules": { "type": "array", "maxItems": 1024, "items": { "type": "object", "additionalProperties": false, "required": ["host", "path"], "properties": { "host": { "type": "string", "minLength": 1, "maxLength": 253 }, "path": { "type": "string", "minLength": 1, "maxLength": 2048 } } } },
+    "accepted": { "type": "boolean" },
+    "health": { "enum": ["pending_pair", "healthy_idle", "active", "unhealthy", "cleanup_required"] },
+    "blocked_count": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+    "restored_count": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+    "error_code": { "enum": ["unpaired", "rejected", "invalid_request", "permission_lost", "session_mismatch", "restore_failed", "internal"] }
+  },
+  "allOf": [
+    { "if": { "properties": { "type": { "enum": ["pair_result", "heartbeat_ack", "start_result", "stop_result"] } } }, "then": { "required": ["request_id"] } },
+    { "if": { "properties": { "type": { "const": "hello" } } }, "then": { "required": ["token", "extension_id", "browser_kind", "profile_label", "capabilities"] } },
+    { "if": { "properties": { "type": { "enum": ["start_session", "stop_session", "blocked_attempt"] } } }, "then": { "required": ["session_id"] } }
+  ]
+}

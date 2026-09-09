@@ -1,5 +1,5 @@
 [workspace]
-members = ["apps/desktop/src-tauri", "crates/browser-native-host"]
+members = ["apps/desktop/src-tauri", "crates/browser-native-host", "crates/browser-protocol"]
 resolver = "2"
 
 [workspace.package]

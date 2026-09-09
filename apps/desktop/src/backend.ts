@@ -224,6 +224,12 @@ export const dismissSummary = () => request<AppSnapshot>("dismiss_summary");
 export const saveSetting = (key: string, value: string) =>
   request<AppSnapshot>("save_setting", { key, value });
 export const completeSetup = () => request<AppSnapshot>("complete_setup");
+export const browserAcceptPairing = () =>
+  request<AppSnapshot>("browser_accept_pairing");
+export const browserForgetPairing = () =>
+  request<AppSnapshot>("browser_forget_pairing");
+export const browserRetryHealth = () =>
+  request<AppSnapshot>("browser_retry_health");
 export const addWhitelist = (kind: WhitelistItem["kind"], value: string) =>
   request<AppSnapshot>("add_whitelist", { kind, value });
 export const removeWhitelist = (id: string) =>

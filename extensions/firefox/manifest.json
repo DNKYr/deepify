@@ -1,10 +1,12 @@
 {
   "manifest_version": 2,
-  "name": "Deepify Focus Companion (Phase 2 simulation)",
+  "name": "Deepify Focus Companion",
   "version": "0.1.0",
-  "description": "Protocol placeholder; website enforcement is deferred to Phase 3.",
+  "description": "Paired-profile website restriction for Deepify focus sessions.",
   "browser_specific_settings": { "gecko": { "id": "focus@deepify.local", "strict_min_version": "120.0" } },
-  "permissions": ["storage", "tabs", "webNavigation", "nativeMessaging"],
+  "incognito": "not_allowed",
+  "permissions": ["<all_urls>", "storage", "tabs", "webRequest", "webRequestBlocking", "nativeMessaging"],
+  "web_accessible_resources": ["blocked.html", "blocked.css", "blocked.js"],
   "background": { "scripts": ["background.js"] },
   "browser_action": { "default_title": "Deepify" }
 }

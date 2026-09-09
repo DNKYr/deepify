@@ -72,12 +72,23 @@
             ln -s ${nativeManifest}/lib/mozilla/native-messaging-hosts/com.deepify.browser.json \
               $out/lib/mozilla/native-messaging-hosts/com.deepify.browser.json
           '';
+          firefoxExtension = pkgs.runCommand "deepify-firefox-extension-0.1.0" { nativeBuildInputs = [ pkgs.zip pkgs.jq ]; } ''
+            mkdir -p $out
+            workdir=$(mktemp -d)
+            cp ${./extensions/firefox}/{manifest.json,background.js,blocked.html,blocked.js,blocked.css} "$workdir/"
+            test "$(jq -r '.browser_specific_settings.gecko.id' "$workdir/manifest.json")" = "focus@deepify.local"
+            test "$(jq -r '.permissions[]' "$workdir/manifest.json" | grep -c '^cookies$' || true)" = 0
+            ! grep -R -E "Phase 2|Preview only|simulated.*website" "$workdir"
+            touch -d @1 "$workdir"/*
+            (cd "$workdir" && zip -X -q -r "$out/deepify-focus-companion.xpi" .)
+          '';
         in {
           default = pkgs.symlinkJoin {
             name = "deepify-0.1.0";
             paths = [ basePackage nativeManifest ];
           };
           browser-native-host = browserNativeHost;
+          firefox-extension = firefoxExtension;
         });
       devShells = eachSystem (pkgs: {
         default = pkgs.mkShell {
@@ -99,7 +110,7 @@
             webkitgtk_4_1
           ];
           shellHook = ''
-            echo "Deepify development shell (Phase 2 simulated integrations)"
+            echo "Deepify development shell (Phase 3 browser integration; Niri/Noctalia simulated)"
           '';
         };
       });

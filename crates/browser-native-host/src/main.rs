@@ -1,30 +1,150 @@
-//! Minimal Phase 2 native-messaging framing probe.
+//! Firefox native-messaging to Deepify desktop socket proxy.
 //!
-//! The production browser policy remains a Phase 3 integration. This helper
-//! only validates the length-prefixed JSON transport and never executes a
-//! browser-provided command.
-use std::io::{self, Read, Write};
+//! This binary deliberately has no session, pairing, whitelist, or URL policy.
+//! It only accepts bounded protocol frames and copies them in both directions.
+use deepify_browser_protocol::{parse_frame, MAX_FRAME_BYTES};
+use std::{
+    env, fs,
+    io::{self, Read, Write},
+    os::unix::{
+        fs::{MetadataExt, PermissionsExt},
+        net::UnixStream,
+    },
+    path::PathBuf,
+    thread,
+};
+
+const SOCKET_RELATIVE_PATH: &str = "deepify/browser-v1.sock";
+
+fn socket_path() -> io::Result<PathBuf> {
+    let runtime = env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "XDG_RUNTIME_DIR is required"))?;
+    let metadata = fs::metadata(&runtime)?;
+    if !secure_runtime_directory(&metadata, unsafe { libc::geteuid() }) {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "insecure runtime directory",
+        ));
+    }
+    Ok(runtime.join(SOCKET_RELATIVE_PATH))
+}
+
+fn secure_runtime_directory(metadata: &fs::Metadata, expected_uid: u32) -> bool {
+    metadata.is_dir()
+        && metadata.uid() == expected_uid
+        && metadata.permissions().mode() & 0o077 == 0
+}
+
+fn read_frame(reader: &mut impl Read) -> io::Result<Option<Vec<u8>>> {
+    let mut length = [0; 4];
+    if reader.read(&mut length[..1])? == 0 {
+        return Ok(None);
+    }
+    reader.read_exact(&mut length[1..])?;
+    let size = u32::from_le_bytes(length) as usize;
+    if size > MAX_FRAME_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "oversized browser frame",
+        ));
+    }
+    let mut body = vec![0; size];
+    reader.read_exact(&mut body)?;
+    parse_frame(&body)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid browser frame"))?;
+    Ok(Some(body))
+}
+
+fn write_frame(writer: &mut impl Write, body: &[u8]) -> io::Result<()> {
+    if body.len() > MAX_FRAME_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "oversized browser frame",
+        ));
+    }
+    writer.write_all(&(body.len() as u32).to_le_bytes())?;
+    writer.write_all(body)?;
+    writer.flush()
+}
+
+fn copy_stdio_to_socket(mut socket: UnixStream) {
+    let stdin = io::stdin();
+    let mut input = stdin.lock();
+    while let Ok(Some(frame)) = read_frame(&mut input) {
+        if write_frame(&mut socket, &frame).is_err() {
+            break;
+        }
+    }
+    let _ = socket.shutdown(std::net::Shutdown::Both);
+}
+
+fn proxy(socket: UnixStream) -> io::Result<()> {
+    let input_socket = socket.try_clone()?;
+    let _reader = thread::spawn(move || copy_stdio_to_socket(input_socket));
+    let stdout = io::stdout();
+    let mut output = stdout.lock();
+    let mut socket = socket;
+    while let Some(frame) = read_frame(&mut socket)? {
+        write_frame(&mut output, &frame)?;
+    }
+    let _ = socket.shutdown(std::net::Shutdown::Both);
+    // Do not join the stdin-forwarding thread here. Firefox keeps native-host
+    // stdin open until this process exits; joining would strand the helper
+    // after a desktop socket close and prevent the extension's fail-open path.
+    Ok(())
+}
 
 fn main() -> io::Result<()> {
-    let mut input = io::stdin().lock();
-    let mut output = io::stdout().lock();
-    loop {
-        let mut len = [0; 4];
-        if input.read_exact(&mut len).is_err() {
-            break;
-        }
-        let size = u32::from_le_bytes(len) as usize;
-        if size > 1024 * 1024 {
-            break;
-        }
-        let mut body = vec![0; size];
-        input.read_exact(&mut body)?;
-        // Transport-only acknowledgement. Policy and pairing belong to the
-        // desktop backend and are not implemented in this Phase 2 helper.
-        let response = br#"{"version":1,"type":"heartbeat_ack"}"#;
-        output.write_all(&(response.len() as u32).to_le_bytes())?;
-        output.write_all(response)?;
-        output.flush()?;
+    let path = socket_path()?;
+    let socket = UnixStream::connect(path)?;
+    proxy(socket)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    const HEARTBEAT: &[u8] = br#"{"version":1,"type":"heartbeat","message_id":"test-1"}"#;
+
+    #[test]
+    fn frames_handle_fragmented_in_memory_data() {
+        let mut encoded = Vec::new();
+        write_frame(&mut encoded, HEARTBEAT).unwrap();
+        let mut cursor = Cursor::new(encoded);
+        assert_eq!(read_frame(&mut cursor).unwrap().unwrap(), HEARTBEAT);
+        assert!(read_frame(&mut cursor).unwrap().is_none());
     }
-    Ok(())
+
+    #[test]
+    fn oversized_and_invalid_frames_are_rejected() {
+        let mut oversized = (MAX_FRAME_BYTES as u32 + 1).to_le_bytes().to_vec();
+        oversized.extend_from_slice(b"ignored");
+        assert!(read_frame(&mut Cursor::new(oversized)).is_err());
+        let mut invalid = Vec::new();
+        write_frame(
+            &mut invalid,
+            br#"{"version":1,"type":"unknown","message_id":"x"}"#,
+        )
+        .unwrap();
+        assert!(read_frame(&mut Cursor::new(invalid)).is_err());
+    }
+
+    #[test]
+    fn runtime_socket_requires_private_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::set_permissions(temp.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let metadata = fs::metadata(temp.path()).unwrap();
+        assert!(secure_runtime_directory(&metadata, metadata.uid()));
+        assert!(!secure_runtime_directory(
+            &metadata,
+            metadata.uid().saturating_add(1)
+        ));
+        fs::set_permissions(temp.path(), fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(!secure_runtime_directory(
+            &fs::metadata(temp.path()).unwrap(),
+            metadata.uid()
+        ));
+    }
 }

@@ -742,17 +742,34 @@ dependencies = [
 [[package]]
 name = "deepify-browser-native-host"
 version = "0.1.0"
+dependencies = [
+ "deepify-browser-protocol",
+ "libc",
+ "tempfile",
+]
+
+[[package]]
+name = "deepify-browser-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
 
 [[package]]
 name = "deepify-desktop"
 version = "0.1.0"
 dependencies = [
+ "deepify-browser-protocol",
  "id3",
+ "libc",
  "notify",
  "rodio",
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",

@@ -2,12 +2,12 @@
 
 ## Status
 
-- **Stage:** Approved Phase 1 product design; Phase 2 implementation complete
+- **Stage:** Phase 3 browser-enforcement implementation in progress
 - **Target:** NixOS, Niri, and Wayland
 - **Application model:** Local-only Tauri desktop application with a Firefox extension
 - **Related documents:** [`DESIGN.md`](DESIGN.md), [`PHASE1_ISSUES.md`](PHASE1_ISSUES.md), and [`PHASE2_IMPLEMENTATION_PLAN.md`](PHASE2_IMPLEMENTATION_PLAN.md)
 
-This document defines the intended production architecture. Phase 2 implements the desktop prototype with simulated restriction adapters. Phase 3 connects the Firefox adapter, and Phase 4 connects Niri and Noctalia enforcement.
+This document defines the intended production architecture. Phase 3 connects the Firefox/Zen adapter; Phase 4 will connect Niri and Noctalia enforcement.
 
 ---
 
@@ -74,6 +74,26 @@ Phase 2 uses `rodio` with its Symphonia MP3 decoder for playback, `id3` for embe
 - **Single instance:** Tauri single-instance plugin or equivalent Rust lock
 
 The dedicated native-host binary is necessary because Firefox launches native messaging hosts as child processes. It forwards framed messages to the already-running desktop backend rather than embedding the full desktop application.
+
+### Phase 3 browser contract
+
+Firefox and Zen communicate only through version-one, length-prefixed JSON
+frames. Every request has a message ID and every response correlates to its
+request. The helper and desktop socket reject oversized (over 256 KiB), invalid,
+wrong-version, and URL-bearing frames. The socket is
+`$XDG_RUNTIME_DIR/deepify/browser-v1.sock`, with a `0700` directory, `0600`
+socket, and same-UID peer check.
+
+The extension generates a profile-local random token. The desktop stores only
+its SHA-256 hash, browser kind, profile label, and pair time; explicit desktop
+acceptance is required before the profile receives a policy. The extension owns
+its in-memory original-tab map. No original or attempted destination is sent to
+the helper, socket, database, logs, diagnostics, or blocked-page URL.
+
+Top-level public HTTP(S) pages are default-denied while a paired session is
+active. Non-HTTP(S), loopback, private, and link-local destinations remain
+allowed. Existing tabs are scanned before start acknowledgement, and the
+extension locally restores surviving blocked tabs if the native port closes.
 
 ---
 

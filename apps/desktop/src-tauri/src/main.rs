@@ -2,30 +2,38 @@
 
 use deepify::{
     audio::{watch_folder, AudioEngine, PlaybackHealth, RodioPlayer, Track},
+    browser::{BrowserBroker, BrowserPairing},
     domain::{
         implicit_app_allowed, normalize_app_id, normalize_website, validate_duration,
         website_allowed, FinishReason, SessionState, WhitelistEntry,
     },
     services::{
-        MockFailure, MockRestrictionCoordinator, RestrictionStep, SessionService, SystemClock,
+        MockFailure, ProductionRestrictionCoordinator, RestrictionStep, SessionService, SystemClock,
     },
-    storage::{FinishSessionRecord, SqliteStore, StoredHistory, StoredTrack},
+    storage::{FinishSessionRecord, SqliteStore, StoredBrowserPairing, StoredHistory, StoredTrack},
 };
 use serde::Serialize;
-use std::{path::PathBuf, sync::Mutex, time::Duration};
+use std::{
+    path::PathBuf,
+    sync::Mutex,
+    time::{Duration, Instant},
+};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_notification::NotificationExt;
 
 struct AppState {
     diagnostic_id: String,
-    sessions: Mutex<SessionService<SystemClock, MockRestrictionCoordinator>>,
+    sessions: Mutex<SessionService<SystemClock, ProductionRestrictionCoordinator>>,
+    browser: BrowserBroker,
     database: Mutex<SqliteStore>,
     audio: Mutex<AudioEngine>,
     player: Mutex<Option<RodioPlayer>>,
     blocked_apps: Mutex<Vec<String>>,
     watchers: Mutex<Vec<notify::RecommendedWatcher>>,
     summary: Mutex<Option<SessionSummaryDto>>,
+    last_browser_health: Mutex<Instant>,
+    pending_browser_cleanup: Mutex<Option<String>>,
 }
 
 #[derive(Clone, Serialize)]
@@ -64,7 +72,7 @@ struct HealthDto {
     component: &'static str,
     status: &'static str,
     last_checked: u64,
-    detail: &'static str,
+    detail: String,
 }
 #[derive(Clone, Serialize)]
 struct WhitelistDto {
@@ -202,6 +210,7 @@ fn snapshot(state: &AppState) -> Result<AppSnapshotDto, String> {
         sessions.restriction.do_not_disturb.healthy(),
     ];
     drop(sessions);
+    let browser_status = state.browser.snapshot();
     let database = state
         .database
         .lock()
@@ -308,10 +317,11 @@ fn snapshot(state: &AppState) -> Result<AppSnapshotDto, String> {
                     "unhealthy"
                 },
                 last_checked: now,
-                detail: if integration_health[0] {
-                    "Simulated connection"
-                } else {
-                    "Simulated preflight failure"
+                detail: match (&browser_status.browser_kind, &browser_status.profile_label) {
+                    (Some(kind), Some(label)) => {
+                        format!("{} · {} ({kind})", browser_status.detail, label)
+                    }
+                    _ => browser_status.detail.to_string(),
                 },
             },
             HealthDto {
@@ -323,9 +333,9 @@ fn snapshot(state: &AppState) -> Result<AppSnapshotDto, String> {
                 },
                 last_checked: now,
                 detail: if integration_health[1] {
-                    "Simulated inventory"
+                    "Simulated inventory".into()
                 } else {
-                    "Simulated preflight failure"
+                    "Simulated preflight failure".into()
                 },
             },
             HealthDto {
@@ -337,9 +347,9 @@ fn snapshot(state: &AppState) -> Result<AppSnapshotDto, String> {
                 },
                 last_checked: now,
                 detail: if integration_health[2] {
-                    "Simulated preservation"
+                    "Simulated preservation".into()
                 } else {
-                    "Simulated preflight failure"
+                    "Simulated preflight failure".into()
                 },
             },
         ],
@@ -444,10 +454,11 @@ fn persist_current(state: &AppState) -> Result<(), String> {
     Ok(())
 }
 fn persist_summary(state: &AppState, summary: &SessionSummaryDto) -> Result<(), String> {
-    state
+    let database = state
         .database
         .lock()
-        .map_err(|_| "database lock poisoned".to_string())?
+        .map_err(|_| "database lock poisoned".to_string())?;
+    database
         .finish_session(FinishSessionRecord {
             id: &summary.id,
             status: if matches!(summary.reason, "interrupted" | "extension_or_app_crash") {
@@ -461,7 +472,69 @@ fn persist_summary(state: &AppState, summary: &SessionSummaryDto) -> Result<(), 
             blocked_attempts: summary.blocked_attempts,
             finished_at: deepify::domain::now_seconds(),
         })
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    if summary.cleanup_complete {
+        database
+            .set_browser_cleanup(&summary.id, false, deepify::domain::now_seconds())
+            .map_err(|error| error.to_string())?;
+        *state
+            .pending_browser_cleanup
+            .lock()
+            .map_err(|_| "browser cleanup lock poisoned".to_string())? = None;
+    } else {
+        *state
+            .pending_browser_cleanup
+            .lock()
+            .map_err(|_| "browser cleanup lock poisoned".to_string())? = Some(summary.id.clone());
+    }
+    Ok(())
+}
+fn resolve_browser_cleanup(state: &AppState) -> Result<(), String> {
+    let session_id = state
+        .pending_browser_cleanup
+        .lock()
+        .map_err(|_| "browser cleanup lock poisoned".to_string())?
+        .clone();
+    let Some(session_id) = session_id else {
+        return Ok(());
+    };
+    state
+        .browser
+        .recover_cleanup(&session_id)
+        .map_err(|error| format!("browser cleanup remains unresolved: {error}"))?;
+    state
+        .database
+        .lock()
+        .map_err(|_| "database lock poisoned".to_string())?
+        .set_browser_cleanup(&session_id, false, deepify::domain::now_seconds())
+        .map_err(|error| error.to_string())?;
+    *state
+        .pending_browser_cleanup
+        .lock()
+        .map_err(|_| "browser cleanup lock poisoned".to_string())? = None;
+    Ok(())
+}
+fn interrupt_for_browser_failure(app: &AppHandle, state: &AppState) -> Result<bool, String> {
+    let mut sessions = state
+        .sessions
+        .lock()
+        .map_err(|_| "session lock poisoned".to_string())?;
+    if sessions.current.is_none() {
+        return Ok(false);
+    }
+    let summary = sessions
+        .runtime_failure("browser")
+        .map_err(|error| error.to_string())?;
+    drop(sessions);
+    let summary = summary_dto(summary);
+    stop_audio(state, true);
+    persist_summary(state, &summary)?;
+    *state
+        .summary
+        .lock()
+        .map_err(|_| "summary lock poisoned".to_string())? = Some(summary);
+    emit_snapshot(app, state)?;
+    Ok(true)
 }
 fn summary_dto(value: deepify::domain::SessionSummary) -> SessionSummaryDto {
     SessionSummaryDto {
@@ -495,8 +568,22 @@ fn session_start(
     {
         return Err("preflight_blocked: close the simulated blocked applications".into());
     }
+    resolve_browser_cleanup(&state)?;
     let id = uuid::Uuid::new_v4().to_string();
     let started_at = deepify::domain::now_seconds();
+    let website_rules = state
+        .database
+        .lock()
+        .map_err(|_| "database lock poisoned".to_string())?
+        .whitelist()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .filter_map(|(_, kind, normalized)| {
+            (kind == "website")
+                .then(|| normalize_website(&normalized).ok())
+                .flatten()
+        })
+        .collect::<Vec<_>>();
     {
         let sessions = state
             .sessions
@@ -517,7 +604,18 @@ fn session_start(
             .sessions
             .lock()
             .map_err(|_| "session lock poisoned".to_string())?;
+        sessions
+            .restriction
+            .browser
+            .configure(id.clone(), website_rules, seconds);
+        state
+            .database
+            .lock()
+            .map_err(|_| "database lock poisoned".to_string())?
+            .set_browser_cleanup(&id, true, started_at)
+            .map_err(|error| error.to_string())?;
         if let Err(error) = sessions.start(seconds, intention.clone()) {
+            let cleanup_required = sessions.recovery_required;
             drop(sessions);
             state
                 .database
@@ -532,6 +630,12 @@ fn session_start(
                     blocked_attempts: 0,
                     finished_at: started_at,
                 })
+                .map_err(|storage_error| storage_error.to_string())?;
+            state
+                .database
+                .lock()
+                .map_err(|_| "database lock poisoned".to_string())?
+                .set_browser_cleanup(&id, cleanup_required, started_at)
                 .map_err(|storage_error| storage_error.to_string())?;
             return Err(error.to_string());
         }
@@ -573,6 +677,41 @@ fn session_start(
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_millis(250));
         let managed = handle.state::<AppState>();
+        for session_id in managed.browser.take_blocked_events() {
+            if let Ok(mut sessions) = managed.sessions.lock() {
+                if sessions
+                    .current
+                    .as_ref()
+                    .is_some_and(|current| current.id == session_id)
+                {
+                    sessions.blocked_attempt();
+                }
+            }
+        }
+        let integration_failed = !managed.browser.take_integration_errors().is_empty();
+        let health_due = managed
+            .last_browser_health
+            .lock()
+            .map(|mut checked| {
+                if checked.elapsed() >= Duration::from_secs(20) {
+                    *checked = Instant::now();
+                    true
+                } else {
+                    false
+                }
+            })
+            .unwrap_or(false);
+        let health_failed = health_due
+            && managed
+                .browser
+                .heartbeat()
+                .and_then(|_| managed.browser.check_health())
+                .is_err();
+        if (integration_failed || health_failed)
+            && interrupt_for_browser_failure(&handle, &managed).unwrap_or(false)
+        {
+            break;
+        }
         let result = {
             let mut sessions = match managed.sessions.lock() {
                 Ok(value) => value,
@@ -616,23 +755,55 @@ fn session_start(
 }
 #[tauri::command]
 fn session_pause(app: AppHandle, state: State<'_, AppState>) -> Result<AppSnapshotDto, String> {
-    state
+    let timer_snapshot = state
         .sessions
         .lock()
         .map_err(|_| "session lock poisoned".to_string())?
         .pause()
         .map_err(|error| error.to_string())?;
+    let id = state
+        .sessions
+        .lock()
+        .map_err(|_| "session lock poisoned".to_string())?
+        .current
+        .as_ref()
+        .map(|current| current.id.clone())
+        .ok_or("missing active session")?;
+    if state
+        .browser
+        .sync_timer_state(&id, "paused", timer_snapshot.remaining.as_secs())
+        .is_err()
+    {
+        interrupt_for_browser_failure(&app, &state)?;
+        return snapshot(&state);
+    }
     persist_current(&state)?;
     emit_snapshot(&app, &state)
 }
 #[tauri::command]
 fn session_resume(app: AppHandle, state: State<'_, AppState>) -> Result<AppSnapshotDto, String> {
-    state
+    let timer_snapshot = state
         .sessions
         .lock()
         .map_err(|_| "session lock poisoned".to_string())?
         .resume()
         .map_err(|error| error.to_string())?;
+    let id = state
+        .sessions
+        .lock()
+        .map_err(|_| "session lock poisoned".to_string())?
+        .current
+        .as_ref()
+        .map(|current| current.id.clone())
+        .ok_or("missing active session")?;
+    if state
+        .browser
+        .sync_timer_state(&id, "working", timer_snapshot.remaining.as_secs())
+        .is_err()
+    {
+        interrupt_for_browser_failure(&app, &state)?;
+        return snapshot(&state);
+    }
     persist_current(&state)?;
     emit_snapshot(&app, &state)
 }
@@ -684,11 +855,83 @@ fn save_setting(
 }
 #[tauri::command]
 fn complete_setup(app: AppHandle, state: State<'_, AppState>) -> Result<AppSnapshotDto, String> {
+    if state.browser.snapshot().state != "healthy_idle" {
+        return Err("browser pairing is required before setup can be completed".into());
+    }
     state
         .database
         .lock()
         .map_err(|_| "database lock poisoned".to_string())?
         .set_setting("setup_complete", "true")
+        .map_err(|error| error.to_string())?;
+    emit_snapshot(&app, &state)
+}
+#[tauri::command]
+fn browser_accept_pairing(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<AppSnapshotDto, String> {
+    if state
+        .sessions
+        .lock()
+        .map_err(|_| "session lock poisoned".to_string())?
+        .current
+        .is_some()
+    {
+        return Err("conflict: browser pairing cannot change during a session".into());
+    }
+    let pairing = state
+        .browser
+        .accept_pending()
+        .map_err(|error| error.to_string())?;
+    state
+        .database
+        .lock()
+        .map_err(|_| "database lock poisoned".to_string())?
+        .save_browser_pairing(&StoredBrowserPairing {
+            token_hash: pairing.token_hash,
+            browser_kind: pairing.browser_kind,
+            profile_label: pairing.profile_label,
+            paired_at: pairing.paired_at,
+        })
+        .map_err(|error| error.to_string())?;
+    emit_snapshot(&app, &state)
+}
+#[tauri::command]
+fn browser_forget_pairing(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<AppSnapshotDto, String> {
+    if state
+        .sessions
+        .lock()
+        .map_err(|_| "session lock poisoned".to_string())?
+        .current
+        .is_some()
+    {
+        return Err("conflict: browser pairing cannot change during a session".into());
+    }
+    state
+        .browser
+        .forget_pairing()
+        .map_err(|error| error.to_string())?;
+    state
+        .database
+        .lock()
+        .map_err(|_| "database lock poisoned".to_string())?
+        .forget_browser_pairing()
+        .map_err(|error| error.to_string())?;
+    emit_snapshot(&app, &state)
+}
+#[tauri::command]
+fn browser_retry_health(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<AppSnapshotDto, String> {
+    resolve_browser_cleanup(&state)?;
+    state
+        .browser
+        .check_health()
         .map_err(|error| error.to_string())?;
     emit_snapshot(&app, &state)
 }
@@ -708,14 +951,21 @@ fn repair_integrations(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<AppSnapshotDto, String> {
-    let mut sessions = state
+    let sessions = state
         .sessions
         .lock()
         .map_err(|_| "session lock poisoned".to_string())?;
     if sessions.current.is_some() {
         return Err("conflict: integration repair is unavailable during a session".into());
     }
-    sessions.restriction = MockRestrictionCoordinator::default();
+    drop(sessions);
+    resolve_browser_cleanup(&state)?;
+    let mut sessions = state
+        .sessions
+        .lock()
+        .map_err(|_| "session lock poisoned".to_string())?;
+    sessions.restriction.applications.failure = MockFailure::None;
+    sessions.restriction.do_not_disturb.failure = MockFailure::None;
     if sessions.recovery_required {
         sessions
             .retry_cleanup()
@@ -736,7 +986,7 @@ fn simulate_unhealthy_integration(
     if sessions.current.is_some() {
         return Err("conflict: health simulation is unavailable during a session".into());
     }
-    sessions.restriction.browser.failure = MockFailure::Preflight;
+    sessions.restriction.applications.failure = MockFailure::Preflight;
     drop(sessions);
     emit_snapshot(&app, &state)
 }
@@ -979,7 +1229,7 @@ fn simulate_runtime_failure(
         .sessions
         .lock()
         .map_err(|_| "session lock poisoned".to_string())?
-        .runtime_failure("simulated browser")
+        .runtime_failure("simulated integration")
         .map_err(|error| error.to_string())?;
     let summary = summary_dto(value);
     stop_audio(&state, true);
@@ -1129,6 +1379,14 @@ fn main() {
             let directory = app.path().app_data_dir()?;
             std::fs::create_dir_all(&directory)?;
             let mut database = SqliteStore::open(directory.join("deepify.sqlite"))?;
+            let browser_pairing = database.browser_pairing()?.map(|pairing| BrowserPairing {
+                token_hash: pairing.token_hash,
+                browser_kind: pairing.browser_kind,
+                profile_label: pairing.profile_label,
+                paired_at: pairing.paired_at,
+            });
+            let browser = BrowserBroker::start(browser_pairing)?;
+            let pending_browser_cleanup = database.browser_cleanup_required()?;
             let recovered = database.recover_abandoned(deepify::domain::now_seconds())?;
             let recovered_summary = if recovered > 0 {
                 database
@@ -1141,7 +1399,7 @@ fn main() {
                         paused_seconds: item.paused_seconds,
                         blocked_attempts: item.blocked_attempts,
                         reason: "interrupted",
-                        cleanup_complete: true,
+                        cleanup_complete: pending_browser_cleanup.is_none(),
                     })
             } else {
                 None
@@ -1181,8 +1439,9 @@ fn main() {
                 diagnostic_id: uuid::Uuid::new_v4().simple().to_string(),
                 sessions: Mutex::new(SessionService::new(
                     SystemClock,
-                    MockRestrictionCoordinator::default(),
+                    ProductionRestrictionCoordinator::new(browser.clone()),
                 )),
+                browser,
                 database: Mutex::new(database),
                 audio: Mutex::new(AudioEngine {
                     queue,
@@ -1192,6 +1451,8 @@ fn main() {
                 blocked_apps: Mutex::new(Vec::new()),
                 watchers: Mutex::new(Vec::new()),
                 summary: Mutex::new(recovered_summary),
+                last_browser_health: Mutex::new(Instant::now()),
+                pending_browser_cleanup: Mutex::new(pending_browser_cleanup),
             });
             for folder in watched_folders {
                 install_folder_watcher(app.handle().clone(), folder)?;
@@ -1207,6 +1468,9 @@ fn main() {
             dismiss_summary,
             save_setting,
             complete_setup,
+            browser_accept_pairing,
+            browser_forget_pairing,
+            browser_retry_health,
             rerun_setup,
             repair_integrations,
             simulate_unhealthy_integration,

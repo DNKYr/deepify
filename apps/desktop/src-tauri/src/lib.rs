@@ -1,8 +1,7 @@
-//! Deepify's platform-independent Phase 2 backend.
+//! Deepify's platform-independent session backend.
 //!
-//! The Tauri command layer is intentionally thin and can be added without
-//! changing these rules. Restriction ports below are mock implementations in
-//! this phase; they never claim to block a real app or website.
+//! The Tauri command layer stays thin. Phase 3 uses a production browser
+//! adapter; application and Do Not Disturb ports remain explicit Phase 4 mocks.
 
 pub mod domain {
     use std::fmt;
@@ -229,8 +228,13 @@ pub mod domain {
                 address.is_loopback()
                     || address.is_unique_local()
                     || address.is_unicast_link_local()
+                    || address.to_ipv4_mapped().is_some_and(is_local_ip_v4)
             }
         }
+    }
+
+    fn is_local_ip_v4(address: std::net::Ipv4Addr) -> bool {
+        address.is_private() || address.is_loopback() || address.is_link_local()
     }
 
     pub fn implicit_app_allowed(app_id: Option<&str>, focus_app: &str) -> bool {
@@ -239,11 +243,13 @@ pub mod domain {
 }
 
 pub mod audio;
+pub mod browser;
 pub mod settings;
 pub mod storage;
 
 pub mod services {
     use super::domain::*;
+    use crate::browser::BrowserBroker;
     use std::collections::HashMap;
     use std::time::Duration;
 
@@ -412,6 +418,77 @@ pub mod services {
     impl ApplicationRestrictionAdapter for MockRestrictionStep {}
     impl DoNotDisturbAdapter for MockRestrictionStep {}
 
+    /// The only non-mock Phase 3 restriction step. Policy is supplied by the
+    /// command layer immediately before a session starts; the native host never
+    /// receives this policy except as a typed browser protocol message.
+    #[derive(Clone)]
+    struct BrowserStartPolicy {
+        session_id: String,
+        rules: Vec<(String, String)>,
+        seconds: u64,
+    }
+    #[derive(Clone)]
+    pub struct ProductionBrowserRestrictionStep {
+        broker: BrowserBroker,
+        pending: Option<BrowserStartPolicy>,
+        active_session: Option<String>,
+    }
+    impl ProductionBrowserRestrictionStep {
+        pub fn new(broker: BrowserBroker) -> Self {
+            Self {
+                broker,
+                pending: None,
+                active_session: None,
+            }
+        }
+        pub fn configure(
+            &mut self,
+            session_id: String,
+            rules: Vec<(String, String)>,
+            seconds: u64,
+        ) {
+            self.pending = Some(BrowserStartPolicy {
+                session_id,
+                rules,
+                seconds,
+            });
+        }
+    }
+    impl RestrictionStep for ProductionBrowserRestrictionStep {
+        fn component(&self) -> &'static str {
+            "browser"
+        }
+        fn preflight(&mut self) -> Result<(), String> {
+            self.broker
+                .check_health()
+                .map_err(|error| format!("browser preflight failed: {error}"))
+        }
+        fn activate(&mut self) -> Result<(), String> {
+            let policy = self
+                .pending
+                .take()
+                .ok_or_else(|| "browser policy was not prepared".to_string())?;
+            self.broker
+                .start_session(&policy.session_id, policy.rules, "working", policy.seconds)
+                .map_err(|error| format!("browser activation failed: {error}"))?;
+            self.active_session = Some(policy.session_id);
+            Ok(())
+        }
+        fn deactivate(&mut self) -> Result<(), String> {
+            if let Some(session_id) = self.active_session.as_deref() {
+                self.broker
+                    .stop_session(session_id)
+                    .map_err(|error| format!("browser cleanup failed: {error}"))?;
+                self.active_session = None;
+            }
+            Ok(())
+        }
+        fn healthy(&self) -> bool {
+            matches!(self.broker.snapshot().state, "healthy_idle" | "active")
+        }
+    }
+    impl BrowserRestrictionAdapter for ProductionBrowserRestrictionStep {}
+
     #[derive(Debug, Clone)]
     pub struct RestrictionCoordinator<B, A, D> {
         pub browser: B,
@@ -421,6 +498,21 @@ pub mod services {
 
     pub type MockRestrictionCoordinator =
         RestrictionCoordinator<MockRestrictionStep, MockRestrictionStep, MockRestrictionStep>;
+    pub type ProductionRestrictionCoordinator = RestrictionCoordinator<
+        ProductionBrowserRestrictionStep,
+        MockRestrictionStep,
+        MockRestrictionStep,
+    >;
+
+    impl ProductionRestrictionCoordinator {
+        pub fn new(browser: BrowserBroker) -> Self {
+            Self {
+                browser: ProductionBrowserRestrictionStep::new(browser),
+                applications: MockRestrictionStep::healthy("applications"),
+                do_not_disturb: MockRestrictionStep::healthy("do_not_disturb"),
+            }
+        }
+    }
 
     impl Default for MockRestrictionCoordinator {
         fn default() -> Self {
@@ -536,7 +628,7 @@ pub mod services {
             let planned =
                 validate_duration(seconds).map_err(|e| SessionError::Invalid(e.to_string()))?;
             if let Err(error) = self.restriction.preflight() {
-                let _ = self.restriction.deactivate();
+                self.recovery_required = self.restriction.deactivate().is_err();
                 return Err(SessionError::Integration(error));
             }
             self.sequence += 1;
@@ -553,7 +645,7 @@ pub mod services {
                 updated_at: self.clock.now(),
             };
             if let Err(error) = self.restriction.activate() {
-                let _ = self.restriction.deactivate();
+                self.recovery_required = self.restriction.deactivate().is_err();
                 return Err(SessionError::Integration(error));
             }
             session.state = SessionState::Working;
@@ -877,6 +969,38 @@ mod tests {
         assert!(!website_allowed("https://other.example.net/docs", &rules));
         assert!(website_allowed("ftp://other.example.net", &rules));
         assert!(website_allowed("http://127.0.0.1:8000", &rules));
+    }
+    #[test]
+    fn rust_url_matcher_uses_the_shared_extension_fixture_matrix() {
+        #[derive(serde::Deserialize)]
+        struct Fixture {
+            version: u8,
+            cases: Vec<Case>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Case {
+            url: String,
+            rules: Vec<String>,
+            allowed: bool,
+        }
+        let fixture: Fixture =
+            serde_json::from_str(include_str!("../../../../contracts/url-rule-cases.json"))
+                .unwrap();
+        assert_eq!(fixture.version, 1);
+        for case in fixture.cases {
+            let rules = case
+                .rules
+                .iter()
+                .map(|rule| normalize_website(rule).unwrap())
+                .map(|(host, path)| WhitelistEntry::Website { host, path })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                website_allowed(&case.url, &rules),
+                case.allowed,
+                "{}",
+                case.url
+            );
+        }
     }
     #[test]
     fn unknown_app_is_allowed_mvp() {

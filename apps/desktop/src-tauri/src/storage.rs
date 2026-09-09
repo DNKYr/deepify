@@ -29,6 +29,14 @@ pub struct StoredMusicSource {
     pub path: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StoredBrowserPairing {
+    pub token_hash: String,
+    pub browser_kind: String,
+    pub profile_label: String,
+    pub paired_at: u64,
+}
+
 pub struct FinishSessionRecord<'a> {
     pub id: &'a str,
     pub status: &'a str,
@@ -100,7 +108,52 @@ impl SqliteStore {
     pub fn migrate(&self) -> Result<(), StorageError> {
         let sql = include_str!("../migrations/001_initial.sql");
         self.connection.execute_batch(sql)?;
+        self.connection
+            .execute_batch(include_str!("../migrations/002_browser_pairing.sql"))?;
         Ok(())
+    }
+    pub fn browser_pairing(&self) -> Result<Option<StoredBrowserPairing>, StorageError> {
+        let row: Option<(String, String, String, i64)> = self.connection.query_row(
+            "SELECT token_hash,browser_kind,profile_label,paired_at FROM browser_pairing WHERE singleton=1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        ).optional()?;
+        row.map(|(token_hash, browser_kind, profile_label, paired_at)| {
+            Ok(StoredBrowserPairing {
+                token_hash,
+                browser_kind,
+                profile_label,
+                paired_at: domain_integer(paired_at, "paired_at")?,
+            })
+        })
+        .transpose()
+    }
+    pub fn save_browser_pairing(&self, pairing: &StoredBrowserPairing) -> Result<(), StorageError> {
+        self.connection.execute(
+            "INSERT INTO browser_pairing(singleton,token_hash,browser_kind,profile_label,paired_at) VALUES(1,?1,?2,?3,?4) ON CONFLICT(singleton) DO UPDATE SET token_hash=excluded.token_hash,browser_kind=excluded.browser_kind,profile_label=excluded.profile_label,paired_at=excluded.paired_at",
+            params![pairing.token_hash, pairing.browser_kind, pairing.profile_label, sqlite_integer(pairing.paired_at, "paired_at")?],
+        )?;
+        Ok(())
+    }
+    pub fn forget_browser_pairing(&self) -> Result<(), StorageError> {
+        self.connection
+            .execute("DELETE FROM browser_pairing WHERE singleton=1", [])?;
+        Ok(())
+    }
+    pub fn set_browser_cleanup(
+        &self,
+        session_id: &str,
+        required: bool,
+        now: u64,
+    ) -> Result<(), StorageError> {
+        self.connection.execute(
+            "INSERT INTO browser_cleanup_checkpoints(session_id,cleanup_required,updated_at) VALUES(?1,?2,?3) ON CONFLICT(session_id) DO UPDATE SET cleanup_required=excluded.cleanup_required,updated_at=excluded.updated_at",
+            params![session_id, required, sqlite_integer(now, "updated_at")?],
+        )?;
+        Ok(())
+    }
+    pub fn browser_cleanup_required(&self) -> Result<Option<String>, StorageError> {
+        self.connection.query_row("SELECT session_id FROM browser_cleanup_checkpoints WHERE cleanup_required=1 ORDER BY updated_at DESC LIMIT 1", [], |row| row.get(0)).optional().map_err(StorageError::from)
     }
     pub fn set_setting(&self, key: &str, value: &str) -> Result<(), StorageError> {
         self.connection.execute(
@@ -400,6 +453,29 @@ mod tests {
         assert_eq!(history[0].reason, "interrupted");
         assert_eq!(history[0].focused_seconds, 12);
         assert_eq!(history[0].paused_seconds, 4);
+    }
+    #[test]
+    fn browser_pairing_and_cleanup_checkpoint_never_store_a_raw_token() {
+        let db = SqliteStore::open_in_memory().unwrap();
+        db.save_browser_pairing(&StoredBrowserPairing {
+            token_hash: "a9f5d4d1b7f0".into(),
+            browser_kind: "firefox".into(),
+            profile_label: "Work profile".into(),
+            paired_at: 42,
+        })
+        .unwrap();
+        let pairing = db.browser_pairing().unwrap().unwrap();
+        assert_eq!(pairing.token_hash, "a9f5d4d1b7f0");
+        assert_ne!(pairing.token_hash, "raw-profile-token");
+        db.set_browser_cleanup("session-1", true, 43).unwrap();
+        assert_eq!(
+            db.browser_cleanup_required().unwrap().as_deref(),
+            Some("session-1")
+        );
+        db.set_browser_cleanup("session-1", false, 44).unwrap();
+        assert_eq!(db.browser_cleanup_required().unwrap(), None);
+        db.forget_browser_pairing().unwrap();
+        assert_eq!(db.browser_pairing().unwrap(), None);
     }
     #[test]
     fn music_source_track_and_queue_crud_is_transactional() {

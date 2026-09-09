@@ -344,7 +344,7 @@ describe("Phase 2 vertical flow", () => {
     const unhealthy = base({
       health: [
         {
-          component: "Browser",
+          component: "Niri application monitor",
           status: "unhealthy",
           lastChecked: 2,
           detail: "Simulated preflight failure",
@@ -354,10 +354,12 @@ describe("Phase 2 vertical flow", () => {
     mocks.unhealthy.mockResolvedValue(unhealthy);
     await user.click(
       screen.getByRole("button", {
-        name: /simulate unhealthy browser health/i,
+        name: /simulate unhealthy application-monitor health/i,
       }),
     );
-    expect(await screen.findByText(/browser: unhealthy/i)).toBeVisible();
+    expect(
+      await screen.findByText(/niri application monitor: unhealthy/i),
+    ).toBeVisible();
     await user.click(
       screen.getByRole("button", { name: /rerun simulated health checks/i }),
     );

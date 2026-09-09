@@ -8,6 +8,9 @@ import {
   audioRetryOutput,
   audioSetVolume,
   audioToggle,
+  browserAcceptPairing,
+  browserForgetPairing,
+  browserRetryHealth,
   completeSetup,
   dismissSummary,
   importMusicFiles,
@@ -109,6 +112,8 @@ export function App() {
       <SetupWizard
         health={snapshot.health}
         onComplete={async () => setSnapshot(await completeSetup())}
+        onAcceptPairing={async () => setSnapshot(await browserAcceptPairing())}
+        onRetryBrowser={async () => setSnapshot(await browserRetryHealth())}
       />
     );
   return (
@@ -146,8 +151,12 @@ export function App() {
         </nav>
       )}
       <section className="simulation" role="status">
-        <strong>Simulated protection</strong> · Browser, Niri application
-        monitoring, and Noctalia Do Not Disturb are simulated in Phase 2.
+        <strong>
+          Website protection is real only for a paired, healthy Firefox/Zen
+          profile.
+        </strong>{" "}
+        Niri application monitoring and Noctalia Do Not Disturb remain
+        simulated.
       </section>
       {error && (
         <p className="error" role="alert">
@@ -248,7 +257,7 @@ function FocusRoom({
       );
     } catch {
       report(
-        `Pre-session validation failed. Review simulated integration health. Diagnostic ID: ${snapshot.diagnosticId}`,
+        `Pre-session validation failed. Review browser integration health. Diagnostic ID: ${snapshot.diagnosticId}`,
       );
     } finally {
       setValidating(false);
@@ -616,7 +625,8 @@ function Whitelist({
       </p>
       <p>
         <strong>Unidentified app — allowed in MVP</strong>. Private windows and
-        unmonitored profiles may bypass simulated protection.
+        unmonitored browser profiles may bypass website protection; application
+        protection remains simulated.
       </p>
       <h3>Test current configuration</h3>
       <label>
@@ -703,6 +713,9 @@ function History({ snapshot }: { snapshot: AppSnapshot }) {
 
 function Settings({ snapshot, update }: PageProps) {
   const navigate = useNavigate();
+  const active = ["starting", "working", "paused", "ending"].includes(
+    snapshot.session.state,
+  );
   const [defaultDuration, setDefaultDuration] = useState(
     String(snapshot.settings.defaultDurationSeconds / 60),
   );
@@ -720,6 +733,20 @@ function Settings({ snapshot, update }: PageProps) {
         {snapshot.health.map((item) => (
           <li key={item.component}>
             {item.component}: {item.status} · {item.detail}
+            {item.component === "Firefox/Zen profile" && !active && (
+              <span className="controls">
+                <button
+                  onClick={async () => update(await browserRetryHealth())}
+                >
+                  Retry browser
+                </button>
+                <button
+                  onClick={async () => update(await browserForgetPairing())}
+                >
+                  Forget paired profile
+                </button>
+              </span>
+            )}
           </li>
         ))}
       </ul>
@@ -729,7 +756,7 @@ function Settings({ snapshot, update }: PageProps) {
       <button
         onClick={async () => update(await simulateUnhealthyIntegration())}
       >
-        Simulate unhealthy browser health
+        Simulate unhealthy application-monitor health
       </button>
       <h3>Focus defaults</h3>
       <form
@@ -790,7 +817,7 @@ function Settings({ snapshot, update }: PageProps) {
         Run setup wizard again
       </button>
       <p>
-        Emergency recovery retries simulated cleanup before another session may
+        Emergency recovery retries unresolved cleanup before another session may
         start.
       </p>
       <h3>Developer simulation</h3>

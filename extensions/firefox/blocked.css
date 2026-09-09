@@ -80,13 +80,6 @@ button:focus-visible {
   margin-top: 2rem;
   color: #d5d8df;
 }
-.simulation {
-  margin-top: 2rem;
-  padding-top: 1rem;
-  border-top: 1px solid #343a49;
-  color: #f2ba76;
-  font-size: 0.9rem;
-}
 @media (prefers-reduced-motion: reduce) {
   * {
     scroll-behavior: auto !important;

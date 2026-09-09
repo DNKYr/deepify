@@ -5,9 +5,13 @@ const steps = ["Integrations", "Browser", "Whitelist", "Music", "Ready"];
 export function SetupWizard({
   health,
   onComplete,
+  onAcceptPairing,
+  onRetryBrowser,
 }: {
   health: Health[];
   onComplete: () => Promise<void>;
+  onAcceptPairing: () => Promise<void>;
+  onRetryBrowser: () => Promise<void>;
 }) {
   const [step, setStep] = useState(0);
   const [musicSkipped, setMusicSkipped] = useState(false);
@@ -23,8 +27,8 @@ export function SetupWizard({
         <p className="eyebrow">SET UP DEEPIFY · STEP {step + 1} OF 5</p>
         <h1 id="setup-title">{steps[step]}</h1>
         <p>
-          <strong>Simulated protection:</strong> Browser, Niri, and Noctalia
-          checks do not enforce restrictions in Phase 2.
+          Website protection becomes real only after a Firefox or Zen profile is
+          paired and healthy. Niri and Noctalia remain simulated.
         </p>
         {step === 0 && (
           <>
@@ -45,11 +49,38 @@ export function SetupWizard({
             </p>
           </>
         )}
-        {step === 1 && (
-          <p>
-            One simulated Firefox or Zen Browser profile is paired and healthy.
-          </p>
-        )}
+        {step === 1 &&
+          (() => {
+            const browser = health.find(
+              (item) => item.component === "Firefox/Zen profile",
+            );
+            return (
+              <>
+                <p>
+                  {browser?.detail ??
+                    "Connect the Deepify companion extension."}
+                </p>
+                <p>
+                  Private windows and other browser profiles are unmonitored
+                  bypasses. Container tabs use the paired profile’s shared
+                  policy.
+                </p>
+                {browser?.detail === "Pairing required" && (
+                  <button
+                    className="primary"
+                    onClick={() => void onAcceptPairing()}
+                  >
+                    Pair this profile
+                  </button>
+                )}
+                {browser?.status !== "healthy" && (
+                  <button onClick={() => void onRetryBrowser()}>
+                    Retry connection
+                  </button>
+                )}
+              </>
+            );
+          })()}
         {step === 2 && (
           <p>
             Create application and website rules after setup. Malformed rules

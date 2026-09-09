@@ -3,6 +3,13 @@ name = "deepify-browser-native-host"
 version.workspace = true
 edition.workspace = true
 
+[dependencies]
+deepify-browser-protocol = { path = "../browser-protocol" }
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3.23"
+
 [[bin]]
 name = "deepify-browser-native-host"
 path = "src/main.rs"

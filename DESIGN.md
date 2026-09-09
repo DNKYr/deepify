@@ -293,10 +293,11 @@ local persistence, production local MP3 playback, notifications, recovery, and
 explicitly simulated restriction adapters. Verification and the P1-24 prototype
 mapping are recorded in [`validation/PHASE2_CHECKS.md`](validation/PHASE2_CHECKS.md).
 
-Next work is Phase 3 production browser integration behind the existing adapter
-and native-host contracts, followed by Phase 4 Niri/Noctalia integration. Release
-follow-ups remain hard-crash and lifecycle validation, real PipeWire device
-switching, signed browser installation, and the target system-component inventory.
+Next work is the sequential Phase 3 production browser integration defined in
+[`PHASE3_IMPLEMENTATION_PLAN.md`](PHASE3_IMPLEMENTATION_PLAN.md), followed by
+Phase 4 Niri/Noctalia integration. Release follow-ups remain hard-crash and
+lifecycle validation, real PipeWire device switching, signed browser publication,
+and the target system-component inventory.
 
 ---
 
