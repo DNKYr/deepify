@@ -1365,6 +1365,12 @@ fn audio_set_volume(
 }
 
 fn main() {
+    #[cfg(target_os = "linux")]
+    {
+        gtk::glib::set_prgname(Some("com.deepify.desktop"));
+        deepify::display::initialize().expect("error initializing Deepify's GTK display");
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             if let Some(window) = app.get_webview_window("main") {

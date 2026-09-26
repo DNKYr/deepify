@@ -762,6 +762,7 @@ name = "deepify-desktop"
 version = "0.1.0"
 dependencies = [
  "deepify-browser-protocol",
+ "gtk",
  "id3",
  "libc",
  "notify",

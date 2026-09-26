@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tauri dev",
+    "frontend:dev": "vite --host 127.0.0.1 --port 1420",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",

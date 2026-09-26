@@ -244,6 +244,8 @@ pub mod domain {
 
 pub mod audio;
 pub mod browser;
+#[cfg(target_os = "linux")]
+pub mod display;
 pub mod settings;
 pub mod storage;
 

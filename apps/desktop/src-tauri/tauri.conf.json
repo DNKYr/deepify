@@ -3,7 +3,7 @@
   "productName": "Deepify",
   "version": "0.1.0",
   "identifier": "com.deepify.desktop",
-  "build": { "beforeDevCommand": "npm run dev", "devUrl": "http://localhost:1420", "frontendDist": "../dist" },
+  "build": { "beforeDevCommand": "npm --workspace @deepify/desktop run frontend:dev", "devUrl": "http://localhost:1420", "frontendDist": "../dist" },
   "app": { "windows": [{ "title": "Deepify", "width": 960, "height": 720, "minWidth": 680, "minHeight": 520, "resizable": false }], "security": { "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'" } },
   "bundle": { "active": false, "targets": "all", "createUpdaterArtifacts": false }
 }
