@@ -1,7 +1,7 @@
 //! Deepify's platform-independent session backend.
 //!
-//! The Tauri command layer stays thin. Phase 3 uses a production browser
-//! adapter; application and Do Not Disturb ports remain explicit Phase 4 mocks.
+//! The Tauri command layer coordinates production browser, Niri, and Noctalia
+//! adapters. Mock adapters are used by isolated domain tests.
 
 pub mod domain {
     use std::fmt;
@@ -265,6 +265,7 @@ pub mod audio;
 pub mod browser;
 #[cfg(target_os = "linux")]
 pub mod display;
+pub mod lifecycle;
 pub mod niri;
 pub mod noctalia;
 mod platform_command;
@@ -284,7 +285,11 @@ pub mod services {
     pub struct SystemClock;
     impl Clock for SystemClock {
         fn now(&self) -> u64 {
-            now_seconds()
+            static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+            START
+                .get_or_init(std::time::Instant::now)
+                .elapsed()
+                .as_secs()
         }
     }
 
@@ -524,16 +529,19 @@ pub mod services {
         RestrictionCoordinator<MockRestrictionStep, MockRestrictionStep, MockRestrictionStep>;
     pub type ProductionRestrictionCoordinator = RestrictionCoordinator<
         ProductionBrowserRestrictionStep,
-        MockRestrictionStep,
-        MockRestrictionStep,
+        crate::niri::NiriAdapter,
+        crate::noctalia::NoctaliaAdapter,
     >;
 
     impl ProductionRestrictionCoordinator {
-        pub fn new(browser: BrowserBroker) -> Self {
+        pub fn new(
+            browser: BrowserBroker,
+            database: std::sync::Arc<std::sync::Mutex<crate::storage::SqliteStore>>,
+        ) -> Self {
             Self {
                 browser: ProductionBrowserRestrictionStep::new(browser),
-                applications: MockRestrictionStep::healthy("applications"),
-                do_not_disturb: MockRestrictionStep::healthy("do_not_disturb"),
+                applications: crate::niri::NiriAdapter::default(),
+                do_not_disturb: crate::noctalia::NoctaliaAdapter::new(database),
             }
         }
     }
@@ -557,9 +565,9 @@ pub mod services {
         fn cleanup_all(&mut self) -> Result<(), String> {
             let mut failures = Vec::new();
             for result in [
-                self.do_not_disturb.deactivate(),
                 self.applications.deactivate(),
                 self.browser.deactivate(),
+                self.do_not_disturb.deactivate(),
             ] {
                 if let Err(error) = result {
                     failures.push(error);
@@ -589,11 +597,11 @@ pub mod services {
                 let _ = self.cleanup_all();
                 return Err(error);
             }
-            if let Err(error) = self.applications.activate() {
+            if let Err(error) = self.do_not_disturb.activate() {
                 let _ = self.cleanup_all();
                 return Err(error);
             }
-            if let Err(error) = self.do_not_disturb.activate() {
+            if let Err(error) = self.applications.activate() {
                 let _ = self.cleanup_all();
                 return Err(error);
             }

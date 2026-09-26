@@ -65,7 +65,7 @@ test('P2-04 through P2-06 register backend commands and keep React presentation-
   for (const boundary of ['BrowserRestrictionAdapter', 'ApplicationRestrictionAdapter', 'DoNotDisturbAdapter', 'RestrictionCoordinator']) {
     assert.match(domain, new RegExp(boundary), `missing restriction boundary: ${boundary}`);
   }
-  assert.match(main, /simulate_blocked_app/);
+  assert.doesNotMatch(main, /simulate_blocked_app/);
   assert.match(main, /resolve_blocked_apps/);
   assert.doesNotMatch(ui, /localStorage/);
   assert.doesNotMatch(ui, /setInterval|setTimeout/);
@@ -109,7 +109,6 @@ test('P2-05 through P2-10 close health, simulation, history, accessibility, and 
   ]) assert.match(domain, pattern);
   for (const command of [
     'test_whitelist',
-    'simulate_unhealthy_integration',
     'repair_integrations',
     'audio_retry_output',
   ]) assert.match(runtime, new RegExp(command));

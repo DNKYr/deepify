@@ -7,15 +7,14 @@ use deepify::{
         implicit_app_allowed, normalize_app_id, normalize_website, validate_duration,
         website_allowed, FinishReason, SessionState, WhitelistEntry,
     },
-    services::{
-        MockFailure, ProductionRestrictionCoordinator, RestrictionStep, SessionService, SystemClock,
-    },
+    lifecycle::{ClockSample, LifecycleWatch},
+    services::{ProductionRestrictionCoordinator, RestrictionStep, SessionService, SystemClock},
     storage::{FinishSessionRecord, SqliteStore, StoredBrowserPairing, StoredHistory, StoredTrack},
 };
 use serde::Serialize;
 use std::{
     path::PathBuf,
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -24,18 +23,21 @@ use tauri_plugin_notification::NotificationExt;
 
 struct AppState {
     diagnostic_id: String,
+    // Serializes complete lifecycle transitions, including durable cleanup.
+    session_operation: Mutex<()>,
     sessions: Mutex<SessionService<SystemClock, ProductionRestrictionCoordinator>>,
     browser: BrowserBroker,
-    database: Mutex<SqliteStore>,
+    database: Arc<Mutex<SqliteStore>>,
     // Serializes playback commands, completion polling, and library reconciliation.
     audio_operation: Mutex<()>,
     audio: Mutex<AudioEngine>,
     player: Mutex<Option<RodioPlayer>>,
-    blocked_apps: Mutex<Vec<String>>,
     watchers: Mutex<std::collections::HashMap<PathBuf, notify::RecommendedWatcher>>,
     summary: Mutex<Option<SessionSummaryDto>>,
     last_browser_health: Mutex<Instant>,
     pending_browser_cleanup: Mutex<Option<String>>,
+    failure_notice: Mutex<Option<String>>,
+    lifecycle_bus: Mutex<Option<gtk::gio::DBusConnection>>,
 }
 
 #[derive(Clone, Serialize)]
@@ -124,6 +126,7 @@ struct AppSnapshotDto {
     history: Vec<HistoryDto>,
     playback: PlaybackDto,
     blocked_apps: Vec<String>,
+    unidentified_app_count: usize,
     summary: Option<SessionSummaryDto>,
 }
 
@@ -192,7 +195,12 @@ fn snapshot(state: &AppState) -> Result<AppSnapshotDto, String> {
             blocked_attempts: timer.blocked_attempts,
             restrictions_active: timer.restrictions_active,
             intention: current.intention.clone(),
-            latest_notice: None,
+            latest_notice: sessions
+                .restriction
+                .applications
+                .policy
+                .latest_notice
+                .clone(),
         }
     } else {
         SessionSnapshotDto {
@@ -203,7 +211,11 @@ fn snapshot(state: &AppState) -> Result<AppSnapshotDto, String> {
             blocked_attempts: 0,
             restrictions_active: false,
             intention: None,
-            latest_notice: None,
+            latest_notice: state
+                .failure_notice
+                .lock()
+                .map_err(|_| "notice lock poisoned")?
+                .clone(),
         }
     };
     let integration_health = [
@@ -211,6 +223,16 @@ fn snapshot(state: &AppState) -> Result<AppSnapshotDto, String> {
         sessions.restriction.applications.healthy(),
         sessions.restriction.do_not_disturb.healthy(),
     ];
+    let blocked_apps = sessions.restriction.applications.policy.blocked_apps();
+    let unidentified_app_count = sessions
+        .restriction
+        .applications
+        .policy
+        .unidentified_count();
+    let application_detail = sessions.restriction.applications.detail.clone();
+    let application_checked = sessions.restriction.applications.last_checked;
+    let dnd_detail = sessions.restriction.do_not_disturb.detail.clone();
+    let dnd_checked = sessions.restriction.do_not_disturb.last_checked;
     drop(sessions);
     let browser_status = state.browser.snapshot();
     let database = state
@@ -295,11 +317,6 @@ fn snapshot(state: &AppState) -> Result<AppSnapshotDto, String> {
         .lock()
         .map_err(|_| "summary lock poisoned".to_string())?
         .clone();
-    let blocked_apps = state
-        .blocked_apps
-        .lock()
-        .map_err(|_| "blocked-app lock poisoned".to_string())?
-        .clone();
     let now = deepify::domain::now_seconds();
     Ok(AppSnapshotDto {
         diagnostic_id: state.diagnostic_id.clone(),
@@ -333,12 +350,8 @@ fn snapshot(state: &AppState) -> Result<AppSnapshotDto, String> {
                 } else {
                     "unhealthy"
                 },
-                last_checked: now,
-                detail: if integration_health[1] {
-                    "Simulated inventory".into()
-                } else {
-                    "Simulated preflight failure".into()
-                },
+                last_checked: application_checked,
+                detail: application_detail,
             },
             HealthDto {
                 component: "Noctalia DND",
@@ -347,12 +360,8 @@ fn snapshot(state: &AppState) -> Result<AppSnapshotDto, String> {
                 } else {
                     "unhealthy"
                 },
-                last_checked: now,
-                detail: if integration_health[2] {
-                    "Simulated preservation".into()
-                } else {
-                    "Simulated preflight failure".into()
-                },
+                last_checked: dnd_checked,
+                detail: dnd_detail,
             },
         ],
         whitelist,
@@ -361,6 +370,7 @@ fn snapshot(state: &AppState) -> Result<AppSnapshotDto, String> {
         history,
         playback,
         blocked_apps,
+        unidentified_app_count,
         summary,
     })
 }
@@ -530,26 +540,58 @@ fn resolve_browser_cleanup(state: &AppState) -> Result<(), String> {
         .map_err(|_| "browser cleanup lock poisoned".to_string())? = None;
     Ok(())
 }
-fn interrupt_for_browser_failure(app: &AppHandle, state: &AppState) -> Result<bool, String> {
-    let mut sessions = state
-        .sessions
+fn interrupt_for_integration_failure(
+    app: &AppHandle,
+    state: &AppState,
+    component: &str,
+    expected_session: Option<&str>,
+) -> Result<bool, String> {
+    interrupt_session_locked(app, state, FinishReason::ExtensionOrAppCrash,
+        format!("The session ended because {component} failed. Check integration health before starting again."), expected_session)
+}
+fn interrupt_session(
+    app: &AppHandle,
+    state: &AppState,
+    reason: FinishReason,
+    notice: String,
+    expected_session: Option<&str>,
+) -> Result<bool, String> {
+    let _operation = state
+        .session_operation
         .lock()
-        .map_err(|_| "session lock poisoned".to_string())?;
-    if sessions.current.is_none() {
+        .map_err(|_| "session operation lock poisoned")?;
+    interrupt_session_locked(app, state, reason, notice, expected_session)
+}
+
+fn interrupt_session_locked(
+    app: &AppHandle,
+    state: &AppState,
+    reason: FinishReason,
+    notice: String,
+    expected_session: Option<&str>,
+) -> Result<bool, String> {
+    let mut sessions = state.sessions.lock().map_err(|_| "session lock poisoned")?;
+    if sessions
+        .current
+        .as_ref()
+        .is_none_or(|current| expected_session.is_some_and(|expected| current.id != expected))
+    {
         return Ok(false);
     }
-    let summary = sessions
-        .runtime_failure("browser")
-        .map_err(|error| error.to_string())?;
+    let summary = sessions.finish(reason).map_err(|error| error.to_string())?;
     drop(sessions);
     let summary = summary_dto(summary);
-    stop_audio(state, true);
-    persist_summary(state, &summary)?;
     *state
-        .summary
+        .failure_notice
         .lock()
-        .map_err(|_| "summary lock poisoned".to_string())? = Some(summary);
+        .map_err(|_| "notice lock poisoned")? = Some(notice);
+    stop_audio(state, true);
+    let persisted = persist_summary(state, &summary);
+    // Publish after the history transaction, even when persistence failed and
+    // needs recovery. A new summary must not race ahead of its history record.
+    *state.summary.lock().map_err(|_| "summary lock poisoned")? = Some(summary);
     emit_snapshot(app, state)?;
+    persisted?;
     Ok(true)
 }
 fn summary_dto(value: deepify::domain::SessionSummary) -> SessionSummaryDto {
@@ -561,6 +603,23 @@ fn summary_dto(value: deepify::domain::SessionSummary) -> SessionSummaryDto {
         reason: finish_name(value.reason),
         cleanup_complete: value.cleanup_complete,
     }
+}
+
+fn refresh_app_inventory(state: &AppState) -> Result<(), String> {
+    let rules = state
+        .database
+        .lock()
+        .map_err(|_| "database lock poisoned")?
+        .whitelist()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .filter_map(|(_, kind, value)| (kind == "application").then_some(value))
+        .collect();
+    let mut sessions = state.sessions.lock().map_err(|_| "session lock poisoned")?;
+    if sessions.current.is_none() {
+        sessions.restriction.applications.policy.configure(rules);
+    }
+    sessions.restriction.applications.refresh()
 }
 
 #[tauri::command]
@@ -575,14 +634,25 @@ fn session_start(
     intention: Option<String>,
     track_path: Option<String>,
 ) -> Result<AppSnapshotDto, String> {
-    validate_duration(seconds).map_err(|error| error.to_string())?;
-    if !state
-        .blocked_apps
+    let _operation = state
+        .session_operation
         .lock()
-        .map_err(|_| "blocked-app lock poisoned".to_string())?
+        .map_err(|_| "session operation lock poisoned")?;
+    validate_duration(seconds).map_err(|error| error.to_string())?;
+    let mut lifecycle_watch = LifecycleWatch::new(ClockSample::read()?);
+    refresh_app_inventory(&state)?;
+    if !state
+        .sessions
+        .lock()
+        .map_err(|_| "session lock poisoned")?
+        .restriction
+        .applications
+        .policy
+        .blocked_apps()
         .is_empty()
     {
-        return Err("preflight_blocked: close the simulated blocked applications".into());
+        emit_snapshot(&app, &state)?;
+        return Err("preflight_blocked: close or whitelist the listed applications".into());
     }
     resolve_browser_cleanup(&state)?;
     let id = uuid::Uuid::new_v4().to_string();
@@ -679,6 +749,10 @@ fn session_start(
         )
         .map_err(|error| error.to_string())?;
     let should_play = track_path.is_some();
+    *state
+        .failure_notice
+        .lock()
+        .map_err(|_| "notice lock poisoned")? = None;
     {
         let _operation = state
             .audio_operation
@@ -697,9 +771,40 @@ fn session_start(
         }
     }
     let handle = app.clone();
+    let mut last_snapshot = Instant::now();
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_millis(250));
         let managed = handle.state::<AppState>();
+        let Ok(_operation) = managed.session_operation.lock() else {
+            break;
+        };
+        if managed
+            .sessions
+            .lock()
+            .map(|sessions| {
+                sessions
+                    .current
+                    .as_ref()
+                    .is_none_or(|current| current.id != id)
+            })
+            .unwrap_or(true)
+        {
+            break;
+        }
+        let lifecycle_notice = match ClockSample::read() {
+            Ok(sample) => lifecycle_watch.observe(sample).map(|cause| format!("The session was interrupted because {}. Start a new session when you are ready.", cause.description())),
+            Err(_) => Some("The session was interrupted because lifecycle monitoring failed.".into()),
+        };
+        if let Some(notice) = lifecycle_notice {
+            let _ = interrupt_session_locked(
+                &handle,
+                &managed,
+                FinishReason::Interrupted,
+                notice,
+                Some(&id),
+            );
+            break;
+        }
         for session_id in managed.browser.take_blocked_events() {
             if let Ok(mut sessions) = managed.sessions.lock() {
                 if sessions
@@ -730,17 +835,53 @@ fn session_start(
                 .heartbeat()
                 .and_then(|_| managed.browser.check_health())
                 .is_err();
-        if (integration_failed || health_failed)
-            && interrupt_for_browser_failure(&handle, &managed).unwrap_or(false)
-        {
-            break;
+        let platform_failure = {
+            let mut sessions = match managed.sessions.lock() {
+                Ok(value) => value,
+                Err(_) => break,
+            };
+            if sessions
+                .current
+                .as_ref()
+                .is_none_or(|current| current.id != id)
+            {
+                break;
+            }
+            match sessions.restriction.applications.poll() {
+                Err(_) => Some("Niri application monitor"),
+                Ok(count) => {
+                    for _ in 0..count {
+                        sessions.blocked_attempt();
+                    }
+                    if health_due && sessions.restriction.do_not_disturb.check_health().is_err() {
+                        Some("Noctalia Do Not Disturb")
+                    } else {
+                        None
+                    }
+                }
+            }
+        };
+        if let Some(component) = platform_failure.or(if integration_failed || health_failed {
+            Some("browser")
+        } else {
+            None
+        }) {
+            if interrupt_for_integration_failure(&handle, &managed, component, Some(&id))
+                .unwrap_or(false)
+            {
+                break;
+            }
         }
         let result = {
             let mut sessions = match managed.sessions.lock() {
                 Ok(value) => value,
                 Err(_) => break,
             };
-            if sessions.current.is_none() {
+            if sessions
+                .current
+                .as_ref()
+                .is_none_or(|current| current.id != id)
+            {
                 break;
             }
             sessions.tick()
@@ -768,8 +909,33 @@ fn session_start(
                 break;
             }
             Ok(None) => {
-                let _ = persist_current(&managed);
-                let _ = emit_snapshot(&handle, &managed);
+                if last_snapshot.elapsed() >= Duration::from_secs(1) {
+                    let timer = match managed.sessions.lock() {
+                        Ok(sessions) => sessions.snapshot(),
+                        Err(_) => break,
+                    };
+                    let timer_state = if timer.state == SessionState::Paused {
+                        "paused"
+                    } else {
+                        "working"
+                    };
+                    if managed
+                        .browser
+                        .sync_timer_state(&id, timer_state, timer.remaining.as_secs())
+                        .is_err()
+                    {
+                        let _ = interrupt_for_integration_failure(
+                            &handle,
+                            &managed,
+                            "browser",
+                            Some(&id),
+                        );
+                        break;
+                    }
+                    let _ = persist_current(&managed);
+                    let _ = emit_snapshot(&handle, &managed);
+                    last_snapshot = Instant::now();
+                }
             }
             Err(_) => break,
         }
@@ -778,6 +944,10 @@ fn session_start(
 }
 #[tauri::command]
 fn session_pause(app: AppHandle, state: State<'_, AppState>) -> Result<AppSnapshotDto, String> {
+    let _operation = state
+        .session_operation
+        .lock()
+        .map_err(|_| "session operation lock poisoned")?;
     let timer_snapshot = state
         .sessions
         .lock()
@@ -797,7 +967,7 @@ fn session_pause(app: AppHandle, state: State<'_, AppState>) -> Result<AppSnapsh
         .sync_timer_state(&id, "paused", timer_snapshot.remaining.as_secs())
         .is_err()
     {
-        interrupt_for_browser_failure(&app, &state)?;
+        interrupt_for_integration_failure(&app, &state, "browser", Some(&id))?;
         return snapshot(&state);
     }
     persist_current(&state)?;
@@ -805,6 +975,10 @@ fn session_pause(app: AppHandle, state: State<'_, AppState>) -> Result<AppSnapsh
 }
 #[tauri::command]
 fn session_resume(app: AppHandle, state: State<'_, AppState>) -> Result<AppSnapshotDto, String> {
+    let _operation = state
+        .session_operation
+        .lock()
+        .map_err(|_| "session operation lock poisoned")?;
     let timer_snapshot = state
         .sessions
         .lock()
@@ -824,7 +998,7 @@ fn session_resume(app: AppHandle, state: State<'_, AppState>) -> Result<AppSnaps
         .sync_timer_state(&id, "working", timer_snapshot.remaining.as_secs())
         .is_err()
     {
-        interrupt_for_browser_failure(&app, &state)?;
+        interrupt_for_integration_failure(&app, &state, "browser", Some(&id))?;
         return snapshot(&state);
     }
     persist_current(&state)?;
@@ -832,6 +1006,10 @@ fn session_resume(app: AppHandle, state: State<'_, AppState>) -> Result<AppSnaps
 }
 #[tauri::command]
 fn session_end(app: AppHandle, state: State<'_, AppState>) -> Result<AppSnapshotDto, String> {
+    let _operation = state
+        .session_operation
+        .lock()
+        .map_err(|_| "session operation lock poisoned")?;
     let value = state
         .sessions
         .lock()
@@ -840,12 +1018,14 @@ fn session_end(app: AppHandle, state: State<'_, AppState>) -> Result<AppSnapshot
         .map_err(|error| error.to_string())?;
     let summary = summary_dto(value);
     stop_audio(&state, true);
-    persist_summary(&state, &summary)?;
+    let persisted = persist_summary(&state, &summary);
     *state
         .summary
         .lock()
         .map_err(|_| "summary lock poisoned".to_string())? = Some(summary);
-    emit_snapshot(&app, &state)
+    let value = emit_snapshot(&app, &state)?;
+    persisted?;
+    Ok(value)
 }
 #[tauri::command]
 fn dismiss_summary(app: AppHandle, state: State<'_, AppState>) -> Result<AppSnapshotDto, String> {
@@ -865,7 +1045,10 @@ fn save_setting(
     match key.as_str() {
         "theme" if matches!(value.as_str(), "obsidian" | "mist") => {}
         "notifications" if matches!(value.as_str(), "true" | "false") => {}
-        "default_duration_seconds" if value.parse::<u64>().is_ok_and(|number| number > 0) => {}
+        "default_duration_seconds"
+            if value
+                .parse::<u64>()
+                .is_ok_and(|number| validate_duration(number).is_ok()) => {}
         _ => return Err("validation_error: unsupported setting".into()),
     }
     state
@@ -878,9 +1061,21 @@ fn save_setting(
 }
 #[tauri::command]
 fn complete_setup(app: AppHandle, state: State<'_, AppState>) -> Result<AppSnapshotDto, String> {
+    let _operation = state
+        .session_operation
+        .lock()
+        .map_err(|_| "session operation lock poisoned")?;
     if state.browser.snapshot().state != "healthy_idle" {
         return Err("browser pairing is required before setup can be completed".into());
     }
+    refresh_app_inventory(&state)?;
+    state
+        .sessions
+        .lock()
+        .map_err(|_| "session lock poisoned")?
+        .restriction
+        .do_not_disturb
+        .preflight()?;
     state
         .database
         .lock()
@@ -894,6 +1089,10 @@ fn browser_accept_pairing(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<AppSnapshotDto, String> {
+    let _operation = state
+        .session_operation
+        .lock()
+        .map_err(|_| "session operation lock poisoned")?;
     if state
         .sessions
         .lock()
@@ -925,6 +1124,10 @@ fn browser_forget_pairing(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<AppSnapshotDto, String> {
+    let _operation = state
+        .session_operation
+        .lock()
+        .map_err(|_| "session operation lock poisoned")?;
     if state
         .sessions
         .lock()
@@ -951,6 +1154,10 @@ fn browser_retry_health(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<AppSnapshotDto, String> {
+    let _operation = state
+        .session_operation
+        .lock()
+        .map_err(|_| "session operation lock poisoned")?;
     resolve_browser_cleanup(&state)?;
     state
         .browser
@@ -960,12 +1167,21 @@ fn browser_retry_health(
 }
 #[tauri::command]
 fn rerun_setup(app: AppHandle, state: State<'_, AppState>) -> Result<AppSnapshotDto, String> {
+    let _operation = state
+        .session_operation
+        .lock()
+        .map_err(|_| "session operation lock poisoned")?;
+    let sessions = state.sessions.lock().map_err(|_| "session lock poisoned")?;
+    if sessions.current.is_some() {
+        return Err("conflict: setup is unavailable during a session".into());
+    }
     state
         .database
         .lock()
         .map_err(|_| "database lock poisoned".to_string())?
         .set_setting("setup_complete", "false")
         .map_err(|error| error.to_string())?;
+    drop(sessions);
     emit_snapshot(&app, &state)
 }
 
@@ -974,6 +1190,10 @@ fn repair_integrations(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<AppSnapshotDto, String> {
+    let _operation = state
+        .session_operation
+        .lock()
+        .map_err(|_| "session operation lock poisoned")?;
     let sessions = state
         .sessions
         .lock()
@@ -982,35 +1202,41 @@ fn repair_integrations(
         return Err("conflict: integration repair is unavailable during a session".into());
     }
     drop(sessions);
-    resolve_browser_cleanup(&state)?;
+    let browser_cleanup = resolve_browser_cleanup(&state);
     let mut sessions = state
         .sessions
         .lock()
         .map_err(|_| "session lock poisoned".to_string())?;
-    sessions.restriction.applications.failure = MockFailure::None;
-    sessions.restriction.do_not_disturb.failure = MockFailure::None;
     if sessions.recovery_required {
-        sessions
-            .retry_cleanup()
-            .map_err(|error| error.to_string())?;
+        let _ = sessions.retry_cleanup();
+    }
+    if !sessions.restriction.do_not_disturb.cleanup_required()? {
+        let _ = sessions.restriction.do_not_disturb.check_health();
+    }
+    if browser_cleanup.is_err() {
+        sessions.recovery_required = true;
     }
     drop(sessions);
-    emit_snapshot(&app, &state)
-}
-#[tauri::command]
-fn simulate_unhealthy_integration(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<AppSnapshotDto, String> {
-    let mut sessions = state
+    let _ = refresh_app_inventory(&state);
+    state
+        .database
+        .lock()
+        .map_err(|_| "database lock poisoned")?
+        .complete_recovered_cleanup()
+        .map_err(|error| error.to_string())?;
+    let cleanup_complete = !state
         .sessions
         .lock()
-        .map_err(|_| "session lock poisoned".to_string())?;
-    if sessions.current.is_some() {
-        return Err("conflict: health simulation is unavailable during a session".into());
+        .map_err(|_| "session lock poisoned")?
+        .recovery_required;
+    if let Some(summary) = state
+        .summary
+        .lock()
+        .map_err(|_| "summary lock poisoned")?
+        .as_mut()
+    {
+        summary.cleanup_complete = cleanup_complete;
     }
-    sessions.restriction.applications.failure = MockFailure::Preflight;
-    drop(sessions);
     emit_snapshot(&app, &state)
 }
 #[tauri::command]
@@ -1020,13 +1246,12 @@ fn add_whitelist(
     kind: String,
     value: String,
 ) -> Result<AppSnapshotDto, String> {
-    if state
-        .sessions
+    let _operation = state
+        .session_operation
         .lock()
-        .map_err(|_| "session lock poisoned".to_string())?
-        .current
-        .is_some()
-    {
+        .map_err(|_| "session operation lock poisoned")?;
+    let sessions = state.sessions.lock().map_err(|_| "session lock poisoned")?;
+    if sessions.current.is_some() {
         return Err("conflict: whitelist is read-only during a session".into());
     }
     let normalized = match kind.as_str() {
@@ -1049,6 +1274,8 @@ fn add_whitelist(
             deepify::domain::now_seconds(),
         )
         .map_err(|error| error.to_string())?;
+    drop(sessions);
+    let _ = refresh_app_inventory(&state);
     emit_snapshot(&app, &state)
 }
 #[tauri::command]
@@ -1106,13 +1333,12 @@ fn remove_whitelist(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<AppSnapshotDto, String> {
-    if state
-        .sessions
+    let _operation = state
+        .session_operation
         .lock()
-        .map_err(|_| "session lock poisoned".to_string())?
-        .current
-        .is_some()
-    {
+        .map_err(|_| "session operation lock poisoned")?;
+    let sessions = state.sessions.lock().map_err(|_| "session lock poisoned")?;
+    if sessions.current.is_some() {
         return Err("conflict: whitelist is read-only during a session".into());
     }
     state
@@ -1121,6 +1347,8 @@ fn remove_whitelist(
         .map_err(|_| "database lock poisoned".to_string())?
         .remove_whitelist(&id)
         .map_err(|error| error.to_string())?;
+    drop(sessions);
+    let _ = refresh_app_inventory(&state);
     emit_snapshot(&app, &state)
 }
 
@@ -1276,66 +1504,15 @@ async fn import_music_folder(
     emit_snapshot(&app, &state)
 }
 #[tauri::command]
-fn simulate_blocked_attempt(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<AppSnapshotDto, String> {
-    let mut sessions = state
-        .sessions
-        .lock()
-        .map_err(|_| "session lock poisoned".to_string())?;
-    if sessions.current.is_none() {
-        return Err("conflict: no active session".into());
-    }
-    sessions.blocked_attempt();
-    drop(sessions);
-    persist_current(&state)?;
-    emit_snapshot(&app, &state)
-}
-#[tauri::command]
-fn simulate_runtime_failure(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<AppSnapshotDto, String> {
-    let value = state
-        .sessions
-        .lock()
-        .map_err(|_| "session lock poisoned".to_string())?
-        .runtime_failure("simulated integration")
-        .map_err(|error| error.to_string())?;
-    let summary = summary_dto(value);
-    stop_audio(&state, true);
-    persist_summary(&state, &summary)?;
-    *state
-        .summary
-        .lock()
-        .map_err(|_| "summary lock poisoned".to_string())? = Some(summary);
-    emit_snapshot(&app, &state)
-}
-
-#[tauri::command]
-fn simulate_blocked_app(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<AppSnapshotDto, String> {
-    *state
-        .blocked_apps
-        .lock()
-        .map_err(|_| "blocked-app lock poisoned".to_string())? =
-        vec!["com.example.Chat".to_string()];
-    emit_snapshot(&app, &state)
-}
-
-#[tauri::command]
 fn resolve_blocked_apps(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<AppSnapshotDto, String> {
-    state
-        .blocked_apps
+    let _operation = state
+        .session_operation
         .lock()
-        .map_err(|_| "blocked-app lock poisoned".to_string())?
-        .clear();
+        .map_err(|_| "session operation lock poisoned")?;
+    refresh_app_inventory(&state)?;
     emit_snapshot(&app, &state)
 }
 
@@ -1535,6 +1712,56 @@ fn poll_audio(state: &AppState) -> bool {
     false
 }
 
+fn install_lifecycle_handlers(app: &AppHandle) {
+    // GLib dispatches these on the GTK main loop; signal handlers themselves do
+    // not acquire Rust locks or touch SQLite.
+    for signal in [libc::SIGTERM, libc::SIGINT] {
+        let handle = app.clone();
+        gtk::glib::unix_signal_add_local(signal, move || {
+            handle.exit(0);
+            gtk::glib::ControlFlow::Continue
+        });
+    }
+    if let Ok(bus) =
+        gtk::gio::bus_get_sync(gtk::gio::BusType::System, None::<&gtk::gio::Cancellable>)
+    {
+        for (member, description) in [
+            ("PrepareForSleep", "the computer is preparing to sleep"),
+            ("PrepareForShutdown", "the computer is shutting down"),
+        ] {
+            let handle = app.clone();
+            bus.signal_subscribe(
+                Some("org.freedesktop.login1"),
+                Some("org.freedesktop.login1.Manager"),
+                Some(member),
+                Some("/org/freedesktop/login1"),
+                None,
+                gtk::gio::DBusSignalFlags::NONE,
+                move |_, _, _, _, _, parameters| {
+                    if parameters.get::<(bool,)>() != Some((true,)) {
+                        return;
+                    }
+                    let handle = handle.clone();
+                    std::thread::spawn(move || {
+                        let state = handle.state::<AppState>();
+                        let _ = interrupt_session(
+                            &handle,
+                            &state,
+                            FinishReason::Interrupted,
+                            format!("The session ended because {description}."),
+                            None,
+                        );
+                    });
+                },
+            );
+        }
+        *app.state::<AppState>()
+            .lifecycle_bus
+            .lock()
+            .expect("lifecycle lock poisoned") = Some(bus);
+    }
+}
+
 fn main() {
     #[cfg(target_os = "linux")]
     {
@@ -1565,7 +1792,7 @@ fn main() {
             let browser = BrowserBroker::start(browser_pairing)?;
             let pending_browser_cleanup = database.browser_cleanup_required()?;
             let recovered = database.recover_abandoned(deepify::domain::now_seconds())?;
-            let recovered_summary = if recovered > 0 {
+            let mut recovered_summary = if recovered > 0 {
                 database
                     .history()?
                     .first()
@@ -1575,7 +1802,7 @@ fn main() {
                         focused_seconds: item.focused_seconds,
                         paused_seconds: item.paused_seconds,
                         blocked_attempts: item.blocked_attempts,
-                        reason: "interrupted",
+                        reason: "extension_or_app_crash",
                         cleanup_complete: pending_browser_cleanup.is_none(),
                     })
             } else {
@@ -1612,26 +1839,47 @@ fn main() {
                     available: item.available,
                 })
                 .collect();
+            let database = Arc::new(Mutex::new(database));
+            let mut restriction =
+                ProductionRestrictionCoordinator::new(browser.clone(), database.clone());
+            let _ = restriction.do_not_disturb.deactivate();
+            let dnd_recovery = restriction
+                .do_not_disturb
+                .cleanup_required()
+                .unwrap_or(true);
+            if !dnd_recovery {
+                let _ = restriction.do_not_disturb.check_health();
+            }
+            let _ = restriction.applications.refresh();
+            let mut sessions = SessionService::new(SystemClock, restriction);
+            sessions.recovery_required = dnd_recovery;
+            database
+                .lock()
+                .map_err(|_| "database lock poisoned")?
+                .complete_recovered_cleanup()?;
+            if let Some(summary) = recovered_summary.as_mut() {
+                summary.cleanup_complete &= !dnd_recovery;
+            }
             app.manage(AppState {
                 diagnostic_id: uuid::Uuid::new_v4().simple().to_string(),
-                sessions: Mutex::new(SessionService::new(
-                    SystemClock,
-                    ProductionRestrictionCoordinator::new(browser.clone()),
-                )),
+                session_operation: Mutex::new(()),
+                sessions: Mutex::new(sessions),
                 browser,
-                database: Mutex::new(database),
+                database,
                 audio_operation: Mutex::new(()),
                 audio: Mutex::new(AudioEngine {
                     queue,
                     ..Default::default()
                 }),
                 player: Mutex::new(None),
-                blocked_apps: Mutex::new(Vec::new()),
                 watchers: Mutex::new(std::collections::HashMap::new()),
                 summary: Mutex::new(recovered_summary),
                 last_browser_health: Mutex::new(Instant::now()),
                 pending_browser_cleanup: Mutex::new(pending_browser_cleanup),
+                failure_notice: Mutex::new(None),
+                lifecycle_bus: Mutex::new(None),
             });
+            install_lifecycle_handlers(app.handle());
             let audio_handle = app.handle().clone();
             std::thread::spawn(move || loop {
                 std::thread::sleep(Duration::from_millis(250));
@@ -1640,6 +1888,7 @@ fn main() {
                     let _ = emit_snapshot(&audio_handle, &state);
                 }
             });
+            let _ = refresh_app_inventory(&app.state::<AppState>());
             for folder in watched_folders {
                 // Missing/removable folders must not prevent startup. Reopening
                 // the library retries watches and rescans every persisted source.
@@ -1661,7 +1910,6 @@ fn main() {
             browser_retry_health,
             rerun_setup,
             repair_integrations,
-            simulate_unhealthy_integration,
             add_whitelist,
             test_whitelist,
             remove_whitelist,
@@ -1673,11 +1921,22 @@ fn main() {
             audio_previous,
             audio_next,
             audio_set_volume,
-            simulate_blocked_app,
             resolve_blocked_apps,
-            simulate_blocked_attempt,
-            simulate_runtime_failure
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Deepify");
+        .build(tauri::generate_context!())
+        .expect("error while building Deepify")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+                if let Some(state) = app.try_state::<AppState>() {
+                    let _ = interrupt_session(
+                        app,
+                        &state,
+                        FinishReason::Interrupted,
+                        "The session ended because Deepify was closed.".into(),
+                        None,
+                    );
+                    stop_audio(&state, false);
+                }
+            }
+        });
 }
