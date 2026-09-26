@@ -27,10 +27,12 @@ struct AppState {
     sessions: Mutex<SessionService<SystemClock, ProductionRestrictionCoordinator>>,
     browser: BrowserBroker,
     database: Mutex<SqliteStore>,
+    // Serializes playback commands, completion polling, and library reconciliation.
+    audio_operation: Mutex<()>,
     audio: Mutex<AudioEngine>,
     player: Mutex<Option<RodioPlayer>>,
     blocked_apps: Mutex<Vec<String>>,
-    watchers: Mutex<Vec<notify::RecommendedWatcher>>,
+    watchers: Mutex<std::collections::HashMap<PathBuf, notify::RecommendedWatcher>>,
     summary: Mutex<Option<SessionSummaryDto>>,
     last_browser_health: Mutex<Instant>,
     pending_browser_cleanup: Mutex<Option<String>>,
@@ -363,7 +365,8 @@ fn snapshot(state: &AppState) -> Result<AppSnapshotDto, String> {
     })
 }
 
-fn play_current_audio(state: &AppState) {
+// Caller holds audio_operation.
+fn play_current_audio_locked(state: &AppState) {
     let (path, volume) = {
         let Ok(mut audio) = state.audio.lock() else {
             return;
@@ -380,7 +383,11 @@ fn play_current_audio(state: &AppState) {
             audio.playing = false;
             return;
         }
-        (track.path.clone(), audio.volume)
+        let path = track.path.clone();
+        if audio.health == PlaybackHealth::MissingFile {
+            audio.health = PlaybackHealth::Ready;
+        }
+        (path, audio.volume)
     };
     let Ok(mut player) = state.player.lock() else {
         return;
@@ -412,6 +419,17 @@ fn play_current_audio(state: &AppState) {
 }
 
 fn stop_audio(state: &AppState, fade: bool) {
+    let Ok(_operation) = state.audio_operation.lock() else {
+        return;
+    };
+    stop_audio_locked(state, fade);
+}
+
+// Caller holds audio_operation.
+fn stop_audio_locked(state: &AppState, fade: bool) {
+    if let Ok(mut audio) = state.audio.lock() {
+        audio.pause();
+    }
     if let Ok(player) = state.player.lock() {
         if let Some(output) = player.as_ref() {
             if fade {
@@ -420,9 +438,6 @@ fn stop_audio(state: &AppState, fade: bool) {
                 output.stop();
             }
         }
-    }
-    if let Ok(mut audio) = state.audio.lock() {
-        audio.pause();
     }
 }
 fn emit_snapshot(app: &AppHandle, state: &AppState) -> Result<AppSnapshotDto, String> {
@@ -662,16 +677,22 @@ fn session_start(
         )
         .map_err(|error| error.to_string())?;
     let should_play = track_path.is_some();
-    if let Some(path) = track_path {
-        if let Ok(mut audio) = state.audio.lock() {
-            audio.current = audio
-                .queue
-                .iter()
-                .position(|track| track.path.to_string_lossy() == path);
+    {
+        let _operation = state
+            .audio_operation
+            .lock()
+            .map_err(|_| "audio operation lock poisoned")?;
+        if let Some(path) = track_path {
+            if let Ok(mut audio) = state.audio.lock() {
+                audio.current = audio
+                    .queue
+                    .iter()
+                    .position(|track| track.path.to_string_lossy() == path);
+            }
         }
-    }
-    if should_play {
-        play_current_audio(&state);
+        if should_play {
+            play_current_audio_locked(&state);
+        }
     }
     let handle = app.clone();
     std::thread::spawn(move || loop {
@@ -1107,6 +1128,10 @@ fn save_import(
     source_path: &str,
     tracks: Vec<Track>,
 ) -> Result<(), String> {
+    let _operation = state
+        .audio_operation
+        .lock()
+        .map_err(|_| "audio operation lock poisoned")?;
     let proposed_id = uuid::Uuid::new_v4().to_string();
     let now = deepify::domain::now_seconds();
     let stored: Vec<_> = tracks.iter().map(stored_track).collect();
@@ -1126,34 +1151,45 @@ fn save_import(
         .audio
         .lock()
         .map_err(|_| "audio lock poisoned".to_string())?;
-    for track in tracks {
-        if !audio.queue.iter().any(|item| item.path == track.path) {
-            audio.queue.push(track);
+    let had_selection = audio.current.is_some();
+    if source_kind == "folder" {
+        audio.reconcile_folder(std::path::Path::new(source_path), tracks);
+    } else {
+        for track in tracks {
+            if let Some(existing) = audio.queue.iter_mut().find(|item| item.path == track.path) {
+                *existing = track;
+            } else {
+                audio.queue.push(track);
+            }
         }
     }
-    audio
-        .queue
-        .sort_by(|left, right| left.path.cmp(&right.path));
+    let stop_removed = had_selection && audio.current.is_none();
     let paths = audio
         .queue
         .iter()
         .map(|item| item.path.to_string_lossy().into_owned())
         .collect::<Vec<_>>();
+    drop(audio);
+    if stop_removed {
+        stop_audio_locked(state, false);
+    }
     state
         .database
         .lock()
-        .map_err(|_| "database lock poisoned".to_string())?
+        .map_err(|_| "database lock poisoned")?
         .replace_queue(&paths)
         .map_err(|error| error.to_string())
 }
 
 fn install_folder_watcher(app: AppHandle, path: PathBuf) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let mut watchers = state.watchers.lock().map_err(|_| "watcher lock poisoned")?;
+    if watchers.contains_key(&path) {
+        return Ok(());
+    }
     let (watcher, receiver) = watch_folder(&path).map_err(|error| error.to_string())?;
-    app.state::<AppState>()
-        .watchers
-        .lock()
-        .map_err(|_| "watcher lock poisoned".to_string())?
-        .push(watcher);
+    watchers.insert(path.clone(), watcher);
+    drop(watchers);
     std::thread::spawn(move || {
         while receiver.recv().is_ok() {
             std::thread::sleep(Duration::from_millis(150));
@@ -1166,6 +1202,40 @@ fn install_folder_watcher(app: AppHandle, path: PathBuf) -> Result<(), String> {
     });
     Ok(())
 }
+#[tauri::command]
+async fn refresh_music_library(app: AppHandle) -> Result<AppSnapshotDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let sources = state
+            .database
+            .lock()
+            .map_err(|_| "database lock poisoned")?
+            .music_sources()
+            .map_err(|error| error.to_string())?;
+        for source in sources {
+            let path = PathBuf::from(&source.path);
+            if source.kind == "folder" {
+                // Reinstall watches in case a removable folder disappeared.
+                state
+                    .watchers
+                    .lock()
+                    .map_err(|_| "watcher lock poisoned")?
+                    .remove(&path);
+                let _ = install_folder_watcher(app.clone(), path.clone());
+            }
+            let tracks = if source.kind == "folder" {
+                AudioEngine::scan_folder(&path)
+            } else {
+                AudioEngine::import_file(&path).into_iter().collect()
+            };
+            save_import(&state, &source.kind, &source.path, tracks)?;
+        }
+        emit_snapshot(&app, &state)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 #[tauri::command]
 async fn import_music_files(
     app: AppHandle,
@@ -1269,6 +1339,10 @@ fn resolve_blocked_apps(
 
 #[tauri::command]
 fn audio_toggle(app: AppHandle, state: State<'_, AppState>) -> Result<AppSnapshotDto, String> {
+    let operation = state
+        .audio_operation
+        .lock()
+        .map_err(|_| "audio operation lock poisoned")?;
     let playing = state
         .audio
         .lock()
@@ -1289,8 +1363,30 @@ fn audio_toggle(app: AppHandle, state: State<'_, AppState>) -> Result<AppSnapsho
             .map_err(|_| "audio lock poisoned".to_string())?
             .pause();
     } else {
-        play_current_audio(&state);
+        let resumed = state
+            .player
+            .lock()
+            .map_err(|_| "player lock poisoned")?
+            .as_ref()
+            .is_some_and(|player| {
+                if !player.output_failed() && !player.finished() {
+                    player.resume();
+                    true
+                } else {
+                    false
+                }
+            });
+        if resumed {
+            state
+                .audio
+                .lock()
+                .map_err(|_| "audio lock poisoned")?
+                .play();
+        } else {
+            play_current_audio_locked(&state);
+        }
     }
+    drop(operation);
     emit_snapshot(&app, &state)
 }
 
@@ -1299,16 +1395,25 @@ fn audio_retry_output(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<AppSnapshotDto, String> {
+    let operation = state
+        .audio_operation
+        .lock()
+        .map_err(|_| "audio operation lock poisoned")?;
     *state
         .player
         .lock()
         .map_err(|_| "player lock poisoned".to_string())? = None;
-    play_current_audio(&state);
+    play_current_audio_locked(&state);
+    drop(operation);
     emit_snapshot(&app, &state)
 }
 
 #[tauri::command]
 fn audio_previous(app: AppHandle, state: State<'_, AppState>) -> Result<AppSnapshotDto, String> {
+    let operation = state
+        .audio_operation
+        .lock()
+        .map_err(|_| "audio operation lock poisoned")?;
     let was_playing = {
         let mut audio = state
             .audio
@@ -1319,13 +1424,25 @@ fn audio_previous(app: AppHandle, state: State<'_, AppState>) -> Result<AppSnaps
         playing
     };
     if was_playing {
-        play_current_audio(&state);
+        play_current_audio_locked(&state);
+    } else if let Some(player) = state
+        .player
+        .lock()
+        .map_err(|_| "player lock poisoned")?
+        .as_ref()
+    {
+        player.stop();
     }
+    drop(operation);
     emit_snapshot(&app, &state)
 }
 
 #[tauri::command]
 fn audio_next(app: AppHandle, state: State<'_, AppState>) -> Result<AppSnapshotDto, String> {
+    let operation = state
+        .audio_operation
+        .lock()
+        .map_err(|_| "audio operation lock poisoned")?;
     let was_playing = {
         let mut audio = state
             .audio
@@ -1336,8 +1453,16 @@ fn audio_next(app: AppHandle, state: State<'_, AppState>) -> Result<AppSnapshotD
         playing
     };
     if was_playing {
-        play_current_audio(&state);
+        play_current_audio_locked(&state);
+    } else if let Some(player) = state
+        .player
+        .lock()
+        .map_err(|_| "player lock poisoned")?
+        .as_ref()
+    {
+        player.stop();
     }
+    drop(operation);
     emit_snapshot(&app, &state)
 }
 
@@ -1347,6 +1472,10 @@ fn audio_set_volume(
     state: State<'_, AppState>,
     volume: u8,
 ) -> Result<AppSnapshotDto, String> {
+    let operation = state
+        .audio_operation
+        .lock()
+        .map_err(|_| "audio operation lock poisoned")?;
     let volume = volume.min(100);
     state
         .audio
@@ -1361,7 +1490,47 @@ fn audio_set_volume(
     {
         output.set_volume(volume);
     }
+    drop(operation);
     emit_snapshot(&app, &state)
+}
+
+fn poll_audio(state: &AppState) -> bool {
+    let Ok(_operation) = state.audio_operation.lock() else {
+        return false;
+    };
+    let playing = state
+        .audio
+        .lock()
+        .map(|audio| audio.playing)
+        .unwrap_or(false);
+    let (failed, finished) = {
+        let Ok(player) = state.player.lock() else {
+            return false;
+        };
+        let Some(player) = player.as_ref() else {
+            return false;
+        };
+        let finished = player.finished();
+        (player.check_output(playing && !finished), finished)
+    };
+    let mut audio = match state.audio.lock() {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    if failed {
+        let changed = audio.health != PlaybackHealth::WaitingForOutputDevice;
+        audio.set_output_available(false);
+        return changed;
+    }
+    if audio.playing && finished {
+        let advance = audio.advance_after_finish();
+        drop(audio);
+        if advance {
+            play_current_audio_locked(state);
+        }
+        return true;
+    }
+    false
 }
 
 fn main() {
@@ -1449,19 +1618,30 @@ fn main() {
                 )),
                 browser,
                 database: Mutex::new(database),
+                audio_operation: Mutex::new(()),
                 audio: Mutex::new(AudioEngine {
                     queue,
                     ..Default::default()
                 }),
                 player: Mutex::new(None),
                 blocked_apps: Mutex::new(Vec::new()),
-                watchers: Mutex::new(Vec::new()),
+                watchers: Mutex::new(std::collections::HashMap::new()),
                 summary: Mutex::new(recovered_summary),
                 last_browser_health: Mutex::new(Instant::now()),
                 pending_browser_cleanup: Mutex::new(pending_browser_cleanup),
             });
+            let audio_handle = app.handle().clone();
+            std::thread::spawn(move || loop {
+                std::thread::sleep(Duration::from_millis(250));
+                let state = audio_handle.state::<AppState>();
+                if poll_audio(&state) {
+                    let _ = emit_snapshot(&audio_handle, &state);
+                }
+            });
             for folder in watched_folders {
-                install_folder_watcher(app.handle().clone(), folder)?;
+                // Missing/removable folders must not prevent startup. Reopening
+                // the library retries watches and rescans every persisted source.
+                let _ = install_folder_watcher(app.handle().clone(), folder);
             }
             Ok(())
         })
@@ -1485,6 +1665,7 @@ fn main() {
             remove_whitelist,
             import_music_files,
             import_music_folder,
+            refresh_music_library,
             audio_toggle,
             audio_retry_output,
             audio_previous,

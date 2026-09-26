@@ -366,15 +366,30 @@ impl SqliteStore {
     ) -> Result<(), StorageError> {
         let now = sqlite_integer(now, "updated_at")?;
         let transaction = self.connection.transaction()?;
-        transaction.execute(
-            "DELETE FROM music_tracks WHERE source_id=?1",
-            params![source_id],
-        )?;
+        let incoming = tracks
+            .iter()
+            .map(|track| track.path.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        let existing = {
+            let mut statement =
+                transaction.prepare("SELECT path FROM music_tracks WHERE source_id=?1")?;
+            let rows = statement.query_map(params![source_id], |row| row.get::<_, String>(0))?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        for path in existing {
+            if !incoming.contains(path.as_str()) {
+                transaction.execute(
+                    "DELETE FROM music_tracks WHERE source_id=?1 AND path=?2",
+                    params![source_id, path],
+                )?;
+            }
+        }
         for track in tracks {
             transaction.execute(
-                "INSERT INTO music_tracks(path,source_id,title,artist,album,available,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7)",
+                "INSERT INTO music_tracks(path,source_id,title,artist,album,available,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(path) DO UPDATE SET title=excluded.title,artist=excluded.artist,album=excluded.album,available=excluded.available,updated_at=excluded.updated_at",
                 params![track.path, source_id, track.title, track.artist, track.album, track.available, now],
             )?;
+            transaction.execute("INSERT INTO queue_entries(position,track_path,source_id) SELECT COALESCE((SELECT MAX(position)+1 FROM queue_entries),0),path,source_id FROM music_tracks WHERE path=?1 AND NOT EXISTS(SELECT 1 FROM queue_entries WHERE track_path=?1)",params![track.path])?;
         }
         transaction.commit()?;
         Ok(())
@@ -540,5 +555,41 @@ mod tests {
         let alias = dir.path().join("alias.sqlite");
         std::os::unix::fs::symlink(&path, &alias).unwrap();
         assert!(SqliteStore::open(alias).is_err());
+    }
+
+    #[test]
+    fn folder_rescan_preserves_persisted_queue_order_across_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.sqlite");
+        let track = |name: &str| StoredTrack {
+            path: format!("/music/{name}.mp3"),
+            title: name.into(),
+            artist: None,
+            album: None,
+            available: true,
+        };
+        let mut db = SqliteStore::open(&path).unwrap();
+        db.add_music_source("folder", "folder", "/music", 1)
+            .unwrap();
+        db.replace_source_tracks("folder", &[track("a"), track("b"), track("c")], 1)
+            .unwrap();
+        db.replace_queue(&[track("c").path, track("a").path, track("b").path])
+            .unwrap();
+        drop(db);
+        let mut db = SqliteStore::open(&path).unwrap();
+        db.replace_source_tracks("folder", &[track("a"), track("c"), track("d")], 2)
+            .unwrap();
+        assert_eq!(
+            db.queue()
+                .unwrap()
+                .iter()
+                .map(|t| t.title.as_str())
+                .collect::<Vec<_>>(),
+            ["c", "a", "d"]
+        );
+        db.add_music_source("file", "file", "/music/a.mp3", 3)
+            .unwrap();
+        db.replace_source_tracks("file", &[track("a")], 3).unwrap();
+        assert_eq!(db.queue().unwrap().len(), 3);
     }
 }
