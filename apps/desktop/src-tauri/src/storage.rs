@@ -14,6 +14,7 @@ pub struct StoredHistory {
     pub reason: String,
     pub started_at: u64,
     pub intention: Option<String>,
+    pub cleanup_complete: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -48,6 +49,7 @@ pub struct FinishSessionRecord<'a> {
     pub paused_seconds: u64,
     pub blocked_attempts: u32,
     pub finished_at: u64,
+    pub cleanup_complete: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -136,6 +138,31 @@ impl SqliteStore {
         self.connection.execute_batch(sql)?;
         self.connection
             .execute_batch(include_str!("../migrations/002_browser_pairing.sql"))?;
+        self.connection
+            .execute_batch(include_str!("../migrations/003_platform_cleanup.sql"))?;
+        Ok(())
+    }
+    pub fn dnd_cleanup_required(&self) -> Result<Option<bool>, StorageError> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT previous_enabled FROM dnd_cleanup_checkpoint WHERE singleton=1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+    pub fn preserve_dnd(&self, previous: bool) -> Result<(), StorageError> {
+        // Never overwrite the original state when a restore is still pending.
+        self.connection.execute(
+            "INSERT INTO dnd_cleanup_checkpoint(singleton,previous_enabled) VALUES(1,?1)",
+            params![previous],
+        )?;
+        Ok(())
+    }
+    pub fn clear_dnd_cleanup(&self) -> Result<(), StorageError> {
+        self.connection
+            .execute("DELETE FROM dnd_cleanup_checkpoint WHERE singleton=1", [])?;
         Ok(())
     }
     pub fn browser_pairing(&self) -> Result<Option<StoredBrowserPairing>, StorageError> {
@@ -258,16 +285,30 @@ impl SqliteStore {
         let focused = sqlite_integer(record.focused_seconds, "focused_seconds")?;
         let paused = sqlite_integer(record.paused_seconds, "paused_seconds")?;
         let now = sqlite_integer(record.finished_at, "finished_at")?;
-        self.connection.execute(
+        let transaction = self.connection.unchecked_transaction()?;
+        transaction.execute(
             "UPDATE sessions SET status=?2,finish_reason=?3,focused_seconds=?4,paused_seconds=?5,blocked_attempt_count=?6,finished_at=?7,updated_at=?7 WHERE id=?1",
             params![record.id, record.status, record.reason, focused, paused, record.blocked_attempts, now],
+        )?;
+        transaction.execute("INSERT INTO session_cleanup_outcomes(session_id,complete) VALUES(?1,?2) ON CONFLICT(session_id) DO UPDATE SET complete=excluded.complete", params![record.id, record.cleanup_complete])?;
+        transaction.commit()?;
+        Ok(())
+    }
+    pub fn complete_recovered_cleanup(&self) -> Result<(), StorageError> {
+        if self.dnd_cleanup_required()?.is_some() || self.browser_cleanup_required()?.is_some() {
+            return Ok(());
+        }
+        self.connection.execute(
+            "UPDATE session_cleanup_outcomes SET complete=1 WHERE complete=0",
+            [],
         )?;
         Ok(())
     }
     pub fn recover_abandoned(&self, now: u64) -> Result<u32, StorageError> {
         let now = sqlite_integer(now, "finished_at")?;
+        self.connection.execute("INSERT OR REPLACE INTO session_cleanup_outcomes(session_id,complete) SELECT id,0 FROM sessions WHERE status IN ('starting','working','paused','ending')", [])?;
         Ok(self.connection.execute(
-            "UPDATE sessions SET status='interrupted',finish_reason='interrupted',finished_at=?1,updated_at=?1 WHERE status IN ('starting','working','paused','ending')",
+            "UPDATE sessions SET status='interrupted',finish_reason='extension_or_app_crash',finished_at=?1,updated_at=?1 WHERE status IN ('starting','working','paused','ending')",
             params![now],
         )? as u32)
     }
@@ -300,7 +341,7 @@ impl SqliteStore {
     }
     pub fn history(&self) -> Result<Vec<StoredHistory>, StorageError> {
         let mut statement = self.connection.prepare(
-            "SELECT id,focused_seconds,paused_seconds,blocked_attempt_count,finish_reason,COALESCE(started_at,created_at),intention FROM sessions WHERE finish_reason IS NOT NULL ORDER BY COALESCE(finished_at,updated_at) DESC",
+            "SELECT id,focused_seconds,paused_seconds,blocked_attempt_count,finish_reason,COALESCE(started_at,created_at),intention,COALESCE((SELECT complete FROM session_cleanup_outcomes WHERE session_id=sessions.id),1) FROM sessions WHERE finish_reason IS NOT NULL ORDER BY COALESCE(finished_at,updated_at) DESC, rowid DESC",
         )?;
         let rows = statement.query_map([], |row| {
             Ok((
@@ -311,10 +352,20 @@ impl SqliteStore {
                 row.get::<_, String>(4)?,
                 row.get::<_, i64>(5)?,
                 row.get::<_, Option<String>>(6)?,
+                row.get::<_, bool>(7)?,
             ))
         })?;
         rows.map(|row| {
-            let (id, focused, paused, blocked_attempts, reason, started_at, intention) = row?;
+            let (
+                id,
+                focused,
+                paused,
+                blocked_attempts,
+                reason,
+                started_at,
+                intention,
+                cleanup_complete,
+            ) = row?;
             Ok(StoredHistory {
                 id,
                 focused_seconds: domain_integer(focused, "focused_seconds")?,
@@ -323,6 +374,7 @@ impl SqliteStore {
                 reason,
                 started_at: domain_integer(started_at, "started_at")?,
                 intention,
+                cleanup_complete,
             })
         })
         .collect()
@@ -470,6 +522,22 @@ mod tests {
         let _ = std::fs::remove_file(p.with_extension("sqlite.backup"));
     }
     #[test]
+    fn database_and_backup_are_private_and_symlinks_are_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("data.sqlite");
+        drop(SqliteStore::open(&path).unwrap());
+        drop(SqliteStore::open(&path).unwrap());
+        for path in [&path, &path.with_extension("sqlite.backup")] {
+            assert_eq!(
+                std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        let alias = dir.path().join("alias.sqlite");
+        std::os::unix::fs::symlink(&path, &alias).unwrap();
+        assert!(SqliteStore::open(alias).is_err());
+    }
+    #[test]
     fn one_active_session_is_enforced() {
         let p = path();
         let db = SqliteStore::open(&p).unwrap();
@@ -477,6 +545,32 @@ mod tests {
         assert_eq!(db.active_session_count().unwrap(), 1);
         assert!(db.insert_session("two", "working", 60, 1).is_err());
         std::fs::remove_file(p).unwrap();
+    }
+    #[test]
+    fn history_orders_sessions_finished_in_the_same_second_newest_first() {
+        let db = SqliteStore::open_in_memory().unwrap();
+        for id in ["first", "second"] {
+            db.insert_session(id, "working", 60, 1).unwrap();
+            db.finish_session(FinishSessionRecord {
+                id,
+                status: "finished",
+                reason: "ended_early",
+                focused_seconds: 0,
+                paused_seconds: 0,
+                blocked_attempts: 0,
+                finished_at: 1,
+                cleanup_complete: true,
+            })
+            .unwrap();
+        }
+        let history = db.history().unwrap();
+        assert_eq!(
+            history
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            ["second", "first"]
+        );
     }
     #[test]
     fn repositories_reject_invalid_values_and_recover_abandoned_sessions() {
@@ -491,7 +585,7 @@ mod tests {
         assert_eq!(db.recover_abandoned(3).unwrap(), 1);
         let history = db.history().unwrap();
         assert_eq!(history.len(), 1);
-        assert_eq!(history[0].reason, "interrupted");
+        assert_eq!(history[0].reason, "extension_or_app_crash");
         assert_eq!(history[0].focused_seconds, 12);
         assert_eq!(history[0].paused_seconds, 4);
     }
@@ -519,6 +613,33 @@ mod tests {
         assert_eq!(db.browser_pairing().unwrap(), None);
     }
     #[test]
+    fn history_keeps_incomplete_cleanup_until_every_checkpoint_is_resolved() {
+        let db = SqliteStore::open_in_memory().unwrap();
+        db.insert_session("one", "working", 60, 1).unwrap();
+        db.preserve_dnd(false).unwrap();
+        db.set_browser_cleanup("one", true, 1).unwrap();
+        db.finish_session(FinishSessionRecord {
+            id: "one",
+            status: "interrupted",
+            reason: "extension_or_app_crash",
+            focused_seconds: 5,
+            paused_seconds: 0,
+            blocked_attempts: 1,
+            finished_at: 6,
+            cleanup_complete: false,
+        })
+        .unwrap();
+        assert!(!db.history().unwrap()[0].cleanup_complete);
+        db.complete_recovered_cleanup().unwrap();
+        assert!(!db.history().unwrap()[0].cleanup_complete);
+        db.clear_dnd_cleanup().unwrap();
+        db.complete_recovered_cleanup().unwrap();
+        assert!(!db.history().unwrap()[0].cleanup_complete);
+        db.set_browser_cleanup("one", false, 7).unwrap();
+        db.complete_recovered_cleanup().unwrap();
+        assert!(db.history().unwrap()[0].cleanup_complete);
+    }
+    #[test]
     fn music_source_track_and_queue_crud_is_transactional() {
         let mut db = SqliteStore::open_in_memory().unwrap();
         let id = db
@@ -538,23 +659,6 @@ mod tests {
         assert_eq!(db.music_sources().unwrap().len(), 1);
         assert_eq!(db.tracks().unwrap().len(), 1);
         assert_eq!(db.queue().unwrap()[0].title, "Song");
-    }
-
-    #[test]
-    fn database_and_backup_are_private_and_symlinks_are_rejected() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("data.sqlite");
-        drop(SqliteStore::open(&path).unwrap());
-        drop(SqliteStore::open(&path).unwrap());
-        for path in [&path, &path.with_extension("sqlite.backup")] {
-            assert_eq!(
-                std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
-                0o600
-            );
-        }
-        let alias = dir.path().join("alias.sqlite");
-        std::os::unix::fs::symlink(&path, &alias).unwrap();
-        assert!(SqliteStore::open(alias).is_err());
     }
 
     #[test]

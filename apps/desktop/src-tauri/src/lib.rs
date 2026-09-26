@@ -266,6 +266,7 @@ pub mod browser;
 #[cfg(target_os = "linux")]
 pub mod display;
 pub mod niri;
+pub mod noctalia;
 mod platform_command;
 pub mod settings;
 pub mod storage;
@@ -780,7 +781,7 @@ pub mod services {
                     focused: s.focused,
                     paused: s.paused,
                     blocked_attempts: s.blocked_attempts,
-                    reason: FinishReason::Interrupted,
+                    reason: FinishReason::ExtensionOrAppCrash,
                     cleanup_complete,
                 };
                 self.history.push(summary.clone());
@@ -905,7 +906,7 @@ mod tests {
         let mut s = SessionService::new(c, MockRestriction::default());
         s.start(5, None).unwrap();
         let x = s.recover_abandoned().unwrap();
-        assert_eq!(x.reason, FinishReason::Interrupted);
+        assert_eq!(x.reason, FinishReason::ExtensionOrAppCrash);
         assert!(s.current.is_none());
     }
     #[test]

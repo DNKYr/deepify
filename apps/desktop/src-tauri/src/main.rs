@@ -171,7 +171,7 @@ fn history_dto(item: StoredHistory) -> HistoryDto {
         paused_seconds: item.paused_seconds,
         blocked_attempts: item.blocked_attempts,
         reason: item.reason,
-        cleanup_complete: true,
+        cleanup_complete: item.cleanup_complete,
         started_at: item.started_at,
         intention: item.intention,
     }
@@ -486,6 +486,7 @@ fn persist_summary(state: &AppState, summary: &SessionSummaryDto) -> Result<(), 
             paused_seconds: summary.paused_seconds,
             blocked_attempts: summary.blocked_attempts,
             finished_at: deepify::domain::now_seconds(),
+            cleanup_complete: summary.cleanup_complete,
         })
         .map_err(|error| error.to_string())?;
     if summary.cleanup_complete {
@@ -644,6 +645,7 @@ fn session_start(
                     paused_seconds: 0,
                     blocked_attempts: 0,
                     finished_at: started_at,
+                    cleanup_complete: !cleanup_required,
                 })
                 .map_err(|storage_error| storage_error.to_string())?;
             state
