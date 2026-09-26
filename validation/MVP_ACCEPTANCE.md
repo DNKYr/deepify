@@ -1,8 +1,8 @@
-# MVP acceptance audit — in progress
+# MVP acceptance audit — behavior verified, release gates open
 
 Baseline: the 29 approved P1-24 criteria in PHASE1_ISSUES.md. Phase 4 and Phase 5
-validation records identify exact commands. “Implemented” below is not a claim
-of complete release verification.
+validation records identify exact commands and test boundaries. All 29 behavior
+criteria have evidence below; this does not close the separate release gates.
 
 | # | Requirement | Current evidence / remaining verification |
 | --- | --- | --- |
@@ -26,7 +26,7 @@ of complete release verification.
 | 18 | Enable and restore prior Noctalia DND | Live false/true prior-state and combined-session tests pass |
 | 19 | Duration required; intention/music optional | Frontend and domain tests pass |
 | 20 | Completion notification | PASS: actual desktop timer completion delivered a notification to the private D-Bus fixture |
-| 21 | Rerun setup from Settings | PASS: rerun-setup backend guard exercised while paused; keyboard confirmation regressions pass |
+| 21 | Rerun setup from Settings | PASS: installed Settings control reopens the wizard and completion persists; active-session guard and keyboard regressions pass |
 | 22 | Optional offline MP3 playback | PASS: silent real MP3 decoder/output test; optional-music frontend behavior also tested |
 | 23 | ID3 and filename fallbacks | PASS: ID3 title/artist/album precedence and blank-tag filename fallbacks tested |
 | 24 | Recursive live folder rescan and deterministic queue | PASS: recursive watcher, symlink-cycle, selection/order, SQLite reopen, library refresh, missing-folder startup and paused-file deletion |
@@ -42,8 +42,8 @@ of complete release verification.
   historical evidence is preserved.
 - Phase 4 target acceptance and handoff are complete; see `PHASE4_HANDOFF.md`.
 - The Nix release candidate built, flake evaluation/checks passed, and installed
-  desktop/helper/XPI checks passed. The final watcher-loop correction is being
-  rebuilt and remeasured; see `PHASE5_HANDOFF.md` for the remaining release work.
+  desktop/helper/XPI checks passed. The final watcher-loop correction is included
+  in the passing installed matrix and performance run; see `PHASE5_HANDOFF.md`.
 - Signed XPI installation needs a signed artifact/signing channel. Development
   installation is proven separately; external signing is still unverified.
 - Mozilla consent declaration and optional-counting behavior require the release

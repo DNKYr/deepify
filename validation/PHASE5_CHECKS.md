@@ -7,8 +7,8 @@ Updated: 2026-09-25. This phase is in progress; the full acceptance audit is
 
 | Check | Result and scope |
 | --- | --- |
-| `nix develop -c cargo test --workspace --all-targets` | PASS: 70 tests; two hardware/display tests ignored by default |
-| `nix develop -c cargo clippy --workspace --all-targets -- -D warnings` | PASS |
+| `nix develop -c cargo test --workspace --all-targets --features deepify-desktop/custom-protocol` | PASS: 70 tests; two hardware/display tests ignored by default |
+| `nix develop -c cargo clippy --workspace --all-targets --features deepify-desktop/custom-protocol -- -D warnings` | PASS |
 | Rust formatting and `git diff --check` | PASS |
 | `npm test` | PASS: 18 Vitest tests and 18 Node tests across three files |
 | Typecheck, lint, frontend formatting, production build | PASS |
@@ -83,16 +83,14 @@ Every close/focus target was guarded; no existing user window was targeted.
 
 ## Open verification and delivery work
 
-- Final regression and packaged-build checks must include the changes discovered
-  by the desktop matrix. Physical suspend/reboot and hardware unplugging were not
-  performed; the private event/output scenarios are documented above.
-- Complete accessibility, concurrency, diagnostic, security/privacy and performance
-  review; validate target system-dialog allowances and final visual states.
-- Run final current-source Nix builds/flake checks and verify installation metadata.
-- Reconcile every Phase 3 named deliverable and every P1-24 acceptance criterion;
-  write the final handoff only when the corresponding evidence exists.
-- Signed browser installation remains an external gate requiring a signed artifact
-  or signing channel. No credentials have been requested or used.
+- Resolve the consent/counting decision and signed-install gate in
+  [BROWSER_RELEASE_READINESS.md](BROWSER_RELEASE_READINESS.md).
+
+Accessibility, concurrency, diagnostics, security/privacy, target system-dialog
+allowances and visual review are recorded below. Named Phase 3 deliverables and
+P1-24 criteria are reconciled in [PHASE3_ACCEPTANCE_AUDIT.md](PHASE3_ACCEPTANCE_AUDIT.md)
+and [MVP_ACCEPTANCE.md](MVP_ACCEPTANCE.md). The current handoff is
+[PHASE5_HANDOFF.md](../PHASE5_HANDOFF.md).
 
 No physical suspend, logout, reboot, or shutdown was performed on the user's
 desktop. No completed-MVP claim is made.
@@ -174,9 +172,8 @@ next folder rescan. A real watcher regression failed before the fix and passed
 after filtering `EventKind::Access`; file creation/removal tests still pass.
 The complete Rust suite now has 70 passing tests (two display/audio tests remain
 opt-in), with strict Clippy passing. The subsequent actual desktop audio/lifecycle
-matrix also passed. In the debug comparison, the 1000-track sample fell from the
-previous installed build's roughly 60% of one core to 15.4%; these are different
-build modes, so the final installed-package comparison must be measured separately.
+matrix also passed. The final installed-package measurement below includes the
+correction and replaces the intermediate debug comparison.
 
 Mozilla lint revealed a separate signing-readiness issue: the extension needs a
 current data-transmission consent declaration. Local native messaging is included
@@ -184,3 +181,65 @@ in Mozilla's definition. The proposed counting/consent behavior and authoritativ
 sources are in [BROWSER_RELEASE_READINESS.md](BROWSER_RELEASE_READINESS.md). No
 `none` declaration was added to hide local transfers. Signed installation and
 that product-boundary decision remain open.
+
+## Final installed candidate (2026-09-25)
+
+`nix build path:/tmp/deepify-phase5-final-8pjkw_xy#default path:/tmp/deepify-phase5-final-8pjkw_xy#browser-native-host path:/tmp/deepify-phase5-final-8pjkw_xy#firefox-extension --no-link --print-out-paths`
+— **PASS**, including 70 Rust tests, 18 Vitest tests, 18 Node tests, strict
+Clippy, TypeScript, ESLint, formatting and production frontend compilation.
+The watcher regression and null-current-track display fix are included.
+
+`nix flake check path:/tmp/deepify-phase5-final-8pjkw_xy --all-systems` — **PASS**.
+Both x86_64 and aarch64 outputs evaluated; execution/build validation was on
+x86_64. The already-built local package was cached, so the command reported zero
+additional check builds. No aarch64 execution is claimed.
+
+Exact output paths, the implementation commit, source fingerprint and unsigned
+XPI hash are in [phase5-release.json](phase5-release.json). All 114 runtime/build/
+contract files match the implementation commit; later documentation and validation
+harness edits are outside that snapshot. The five XPI assets match the current
+extension sources byte for byte. Installed launcher/icon metadata and the absolute
+native-host manifest target were verified. The final packaged native host and XPI
+also passed the production block/restore harness in Firefox 156.0 and Zen 1.22.3b,
+using temporary extension installation in disposable profiles outside the
+development shell.
+
+Outside `nix develop`, the final installed desktop passed:
+
+```sh
+dbus-run-session -- env DEEPIFY_DESKTOP_BIN=/path/to/package/bin/deepify \
+  DEEPIFY_PORTAL_VALIDATION=1 DEEPIFY_AUDIO_VALIDATION=1 \
+  DEEPIFY_FAILURE_VALIDATION=1 DEEPIFY_PERFORMANCE_VALIDATION=1 \
+  python3 validation/phase5-desktop-lifecycle.py
+dbus-run-session -- env DEEPIFY_DESKTOP_BIN=/path/to/package/bin/deepify \
+  DEEPIFY_SETUP_VALIDATION_ONLY=1 python3 validation/phase5-desktop-lifecycle.py
+dbus-run-session -- python3 validation/phase5-desktop-smoke.py /path/to/package/bin/deepify
+```
+
+Only the pinned FFmpeg binary directory was added to the ordinary PATH for audio
+fixture generation; no development-shell GTK schema variables were supplied.
+The matrix passed actual audio loss/retry, native chooser cancellation, all three
+component failures, browser disconnect, completion notification, injected power
+events, SIGTERM, hard-kill recovery, theme persistence and missing-folder startup.
+The targeted setup check clicked Settings' rerun control and verified wizard
+entry and persisted completion. Single-instance and exact app-ID checks passed.
+
+| Final installed measurement | Result |
+| --- | --- |
+| Startup to loaded IPC, three launches | 710–923 ms |
+| Warm idle, empty queue | 1.0% of one core; 527.4 MiB summed RSS |
+| Working, empty queue | 9.6% of one core; 556.7 MiB summed RSS |
+| 1000-file metadata scan and reconciliation | 110 ms |
+| Working, 1000-track queue | 18.0% of one core; 565.9 MiB summed RSS |
+| 1000-track snapshot round trip, ten calls | 20.0 ms median; 23.8 ms maximum |
+
+CPU samples cover five seconds of the persistent desktop process tree. Shared
+RSS pages may be counted more than once. The 1000 empty MP3 fixtures measure
+metadata/queue work, not decoder throughput. The earlier installed candidate used
+roughly 60% of one core in this workload before the watcher correction; these are
+short target-machine observations, not a universal performance guarantee.
+
+The signed-install harness also correctly rejected the unsigned XPI with
+`ERROR_SIGNEDSTATE_REQUIRED` in Firefox. This confirms enforcement of the signing
+gate and does not close it. Browser consent and signed installation remain the
+open release work described above.

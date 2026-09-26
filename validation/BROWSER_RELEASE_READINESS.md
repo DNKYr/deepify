@@ -43,3 +43,8 @@ channel. The harness supports `DEEPIFY_EXTENSION_PATH=/absolute/signed.xpi` and
 `DEEPIFY_SIGNED_INSTALL=1`, which requests permanent installation with signature
 enforcement enabled in a disposable profile. No signing credentials are stored
 in this repository, and no extension has been submitted or published.
+
+The permanent-install harness was also checked with the unsigned packaged XPI
+on Firefox 156.0. Firefox rejected it with `ERROR_SIGNEDSTATE_REQUIRED`, as
+expected. This verifies that signature enforcement is active; it does not
+verify signed installation.

@@ -9,8 +9,8 @@ does not complete this phase.
 | P5-01 | Monotonic timer, suspend/clock-change detection, planned exit/shutdown cleanup, abandoned-session recovery and single-instance verification | Implemented; actual desktop and injected lifecycle matrix pass |
 | P5-02 | Real audio-device failure/retry, missing-file behavior, ordered folder reconciliation and safe recursive scanning | Implemented; real default output and isolated PipeWire loss/retry pass |
 | P5-03 | Keyboard/focus/accessibility review, accurate recovery diagnostics and current browser regression scenarios | Verified; see Phase 5 validation |
-| P5-04 | Privacy/security/performance audit and reproducible installable Nix artifacts | In progress |
-| P5-05 | Requirement-by-requirement P1-24 audit, final handoff, external signed-XPI install gate | Audit and handoff drafted; consent/counting decision and signed install open |
+| P5-04 | Privacy/security/performance audit and reproducible installable Nix artifacts | Local audit, final Nix build and installed verification pass; browser consent/signing still open |
+| P5-05 | Requirement-by-requirement P1-24 audit, final handoff, external signed-XPI install gate | Audit and handoff recorded; consent/counting decision and signed install open |
 
 ## Findings addressed in the current implementation
 

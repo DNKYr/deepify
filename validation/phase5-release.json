@@ -1,0 +1,55 @@
+{
+  "verified_local_date": "2026-09-25",
+  "implementation_commit": "35bfdad1e31a87eb47b6dd151849a6050d818a3f",
+  "build_snapshot": "/tmp/deepify-phase5-final-8pjkw_xy",
+  "source_scope": "Runtime, tests, build and contract files match the implementation commit. Handoff docs and validation harnesses were updated after the snapshot.",
+  "source_file_count": 114,
+  "source_hash_algorithm": "SHA256 of UTF-8 json.dumps(sorted path-to-SHA256 map, sort_keys=True, separators=(comma, colon))",
+  "source_map_sha256": "3054aecc3afcf063a74880fbe99e536222760c0d16cba23b892d8691d6128ed6",
+  "outputs": {
+    "desktop": "/nix/store/lcyg74m2bjw45qdvy7rvv4kqc0w736l2-deepify-0.1.0",
+    "base": "/nix/store/pwlflx5h72v9mq6ns4lv9p2r91lrlsfc-deepify-0.1.0",
+    "native_host": "/nix/store/nlg045skbb7pk83l9669yglfz2f38v4s-deepify-browser-native-host-0.1.0",
+    "unsigned_xpi": "/nix/store/f3wsad2yxvxxkjrbm6hhls05gr6s4hw1-deepify-firefox-extension-0.1.0/deepify-focus-companion.xpi"
+  },
+  "xpi_sha256": "9755bd04340acba942827a225045796f15c050101bd6fd484763076dfaecc7a7",
+  "quality": {
+    "rust_passed": 70,
+    "rust_opt_in_ignored": 2,
+    "vitest_passed": 18,
+    "node_passed": 18,
+    "strict_clippy": "pass",
+    "typescript": "pass",
+    "eslint": "pass",
+    "formatting": "pass",
+    "frontend_build": "pass"
+  },
+  "execution_platform": "x86_64-linux",
+  "flake_evaluation_platforms": [
+    "x86_64-linux",
+    "aarch64-linux"
+  ],
+  "arm_execution_tested": false,
+  "signed_install_verified": false,
+  "open_gates": [
+    "browser native-message consent and optional-counting decision/implementation",
+    "permanent signed Firefox and Zen installation"
+  ],
+  "performance": {
+    "sample_seconds": 5,
+    "cpu_unit": "percent of one core, persistent process tree",
+    "rss_unit": "MiB summed RSS; shared pages can be counted more than once",
+    "startup_ipc_ms": [
+      923,
+      710,
+      886
+    ],
+    "idle_empty_queue_cpu": 1.0,
+    "working_empty_queue_cpu": 9.6,
+    "working_1000_queue_cpu": 18.0,
+    "working_1000_queue_rss": 565.9,
+    "metadata_1000_scan_ms": 110,
+    "working_1000_snapshot_median_ms": 20.0,
+    "working_1000_snapshot_max_ms": 23.8
+  }
+}

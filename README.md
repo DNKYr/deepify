@@ -12,8 +12,10 @@ DND's previous state is checkpointed before enabling it and restored on cleanup.
 
 Current evidence and remaining acceptance work are in
 [validation/PHASE5_CHECKS.md](validation/PHASE5_CHECKS.md) and the
-[MVP acceptance audit](validation/MVP_ACCEPTANCE.md). Desktop lifecycle and audio recovery are verified. Final packaged-install checks
-and signed browser installation remain open.
+[MVP acceptance audit](validation/MVP_ACCEPTANCE.md). The release handoff is
+[PHASE5_HANDOFF.md](PHASE5_HANDOFF.md). Browser consent/counting decisions and
+permanent signed installation remain open; see
+[browser release readiness](validation/BROWSER_RELEASE_READINESS.md).
 
 ## Develop and verify
 
@@ -61,8 +63,8 @@ native-messaging-host directory (for Home Manager, commonly
 `~/.mozilla/native-messaging-hosts/`). Do not modify an existing profile
 automatically. The extension is temporary-development-install only until it is
 signed; private windows and additional/unpaired profiles are disclosed bypasses.
-Zen Beta 1.21.15b was verified with the same native-host manifest path in a
-disposable profile.
+Firefox 156.0 and Zen 1.22.3b were verified with the same native-host manifest
+layout in disposable profiles.
 
 See [PHASE3_HANDOFF.md](PHASE3_HANDOFF.md) for historical browser verification
 and its external signing gate. `PHASE2_HANDOFF.md` and `validation/PHASE2_CHECKS.md` remain the historic

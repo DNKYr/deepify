@@ -1135,7 +1135,7 @@ loss/switch/recovery event remains a release-platform test.
 
 ## P1-24 — MVP acceptance criteria
 
-**Status:** Approved; criteria remain unchecked until implemented and tested
+**Status:** Behavior implemented and verified; browser release gates remain open
 **Category:** Product definition  
 **Priority:** Critical
 
@@ -1143,39 +1143,44 @@ Finalize testable acceptance criteria after the behavior and feasibility issues 
 
 ### Approved MVP criteria
 
-- [ ] A session cannot start while a detected, identified, non-whitelisted app is open.
-- [ ] Missing or unknown app IDs are visibly labeled and allowed as an MVP limitation.
-- [ ] Terminal-hosted processes are ignored; the terminal window is classified by its Wayland app ID.
-- [ ] The focus app and MVP system components are implicitly allowed.
-- [ ] A session cannot start unless the paired Firefox extension is connected and healthy.
-- [ ] Visiting a non-whitelisted domain during a session displays the blocked experience.
-- [ ] Existing non-whitelisted tabs become inaccessible when a session starts.
-- [ ] Opening a non-whitelisted app during a session triggers the selected Standard-mode response.
-- [ ] Restrictions are removed when a session ends.
-- [ ] Restrictions remain active while the timer is paused.
-- [ ] The whitelist cannot be changed during an active or paused session.
-- [ ] Malformed whitelist input is rejected completely, never saved, and shown with a clear validation error.
-- [ ] Blocked tabs automatically return to their original URLs when a session ends.
-- [ ] Any restriction-component runtime failure ends the session and removes all restrictions.
-- [ ] Suspend, clock change, crash, logout, reboot, or shutdown ends and interrupts an active session rather than resuming it.
-- [ ] Only one desktop-app instance can run.
-- [ ] Session history remains entirely local and stores deep-work time, blocked-attempt count, and finish reason.
-- [ ] Noctalia Do Not Disturb is enabled during a session and its previous state is restored afterward.
-- [ ] Duration is required; session intention and music are optional.
-- [ ] Session completion sends a desktop notification.
-- [ ] The setup wizard can be rerun from Settings.
-- [ ] Local MP3 playback works without internet access and is optional.
-- [ ] ID3 metadata takes precedence, with `Artist - Title.mp3` and filename-stem fallbacks.
-- [ ] Live folder playlists rescan recursively and reconcile the queue deterministically after file changes.
-- [ ] Audio-device loss enters a visible waiting state and playback can recover onto an available device.
-- [ ] No account or sign-in is displayed or required.
-- [ ] The default UI is minimal and uses the Obsidian-inspired scheme.
-- [ ] The selected MVP color scheme persists between launches.
-- [ ] Restriction failures are reported clearly and are never hidden from the user.
+- [x] A session cannot start while a detected, identified, non-whitelisted app is open.
+- [x] Missing or unknown app IDs are visibly labeled and allowed as an MVP limitation.
+- [x] Terminal-hosted processes are ignored; the terminal window is classified by its Wayland app ID.
+- [x] The focus app and MVP system components are implicitly allowed.
+- [x] A session cannot start unless the paired Firefox extension is connected and healthy.
+- [x] Visiting a non-whitelisted domain during a session displays the blocked experience.
+- [x] Existing non-whitelisted tabs become inaccessible when a session starts.
+- [x] Opening a non-whitelisted app during a session triggers the selected Standard-mode response.
+- [x] Restrictions are removed when a session ends.
+- [x] Restrictions remain active while the timer is paused.
+- [x] The whitelist cannot be changed during an active or paused session.
+- [x] Malformed whitelist input is rejected completely, never saved, and shown with a clear validation error.
+- [x] Blocked tabs automatically return to their original URLs when a session ends.
+- [x] Any restriction-component runtime failure ends the session and removes all restrictions.
+- [x] Suspend, clock change, crash, logout, reboot, or shutdown ends and interrupts an active session rather than resuming it.
+- [x] Only one desktop-app instance can run.
+- [x] Session history remains entirely local and stores deep-work time, blocked-attempt count, and finish reason.
+- [x] Noctalia Do Not Disturb is enabled during a session and its previous state is restored afterward.
+- [x] Duration is required; session intention and music are optional.
+- [x] Session completion sends a desktop notification.
+- [x] The setup wizard can be rerun from Settings.
+- [x] Local MP3 playback works without internet access and is optional.
+- [x] ID3 metadata takes precedence, with `Artist - Title.mp3` and filename-stem fallbacks.
+- [x] Live folder playlists rescan recursively and reconcile the queue deterministically after file changes.
+- [x] Audio-device loss enters a visible waiting state and playback can recover onto an available device.
+- [x] No account or sign-in is displayed or required.
+- [x] The default UI is minimal and uses the Obsidian-inspired scheme.
+- [x] The selected MVP color scheme persists between launches.
+- [x] Restriction failures are reported clearly and are never hidden from the user.
 
 ### Resolution
 
-Approved as the MVP's implementation and release acceptance baseline. The checkboxes remain unchecked until the corresponding behavior is implemented and verified.
+Approved as the MVP's implementation and release acceptance baseline. The checked
+behaviors are mapped to evidence and scope in
+[the acceptance audit](validation/MVP_ACCEPTANCE.md). Power-state checks use
+private event injection; a hard browser-process loss can destroy the in-memory
+original-tab map. Browser consent/counting decisions and permanent signed
+installation remain open, so these checks do not declare the release complete.
 
 ---
 
@@ -1189,4 +1194,4 @@ Resolve issues in this order to minimize rework:
 4. **P1-18:** Whitelist validation UX — completed
 5. **P1-19/P1-23:** Local audio details and feasibility — completed for MVP feasibility; hardware device switching remains an implementation test
 6. **P1-20:** Low-fidelity wireframes — approved
-7. **P1-24:** Final MVP acceptance criteria — approved; verification pending implementation
+7. **P1-24:** Final MVP acceptance criteria — behavior verified; browser release gates remain open

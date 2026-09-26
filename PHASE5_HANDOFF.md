@@ -20,7 +20,10 @@ native-host manifest and GTK schema wrappers. The first installed package passed
 single-instance, file chooser and lifecycle checks outside the development shell.
 A 1000-track performance run then exposed a watcher feedback loop; the regression
 was reproduced and fixed by ignoring metadata-read access events. The final
-package rebuild and measurement must include that correction.
+package rebuild and full installed desktop/audio/failure matrix pass with that
+correction. The 1000-track sample used 18% of one CPU core (previously roughly
+60%), with a 110 ms metadata scan. Final installed setup rerun and single-instance
+checks also pass. See the validation record for measurement scope and artifact paths.
 
 ## Remaining release decisions
 

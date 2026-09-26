@@ -354,6 +354,17 @@ os.execv({noctalia!r}, [{noctalia!r}, *args])
             time.sleep(0.3)
             launch()
             capture("02-idle-obsidian.png")
+            if os.environ.get("DEEPIFY_SETUP_VALIDATION_ONLY") == "1":
+                script("Array.from(document.querySelectorAll('a')).find(link=>link.textContent.trim()==='Settings').click(); return true;")
+                wait_for("Settings rerun control", lambda: script("return Array.from(document.querySelectorAll('button')).some(button=>button.textContent.trim()==='Run setup wizard again')"))
+                script("Array.from(document.querySelectorAll('button')).find(button=>button.textContent.trim()==='Run setup wizard again').click(); return true;")
+                wait_for("rerun wizard", lambda: script("return /step 1 of 5/i.test(document.body.innerText)"))
+                assert not invoke("app_snapshot")["settings"]["setupComplete"]
+                invoke("complete_setup")
+                wait_for("setup completion", lambda: script("return !/step 1 of 5/i.test(document.body.innerText)"))
+                assert invoke("app_snapshot")["settings"]["setupComplete"]
+                print("PASS: installed Settings control reruns the setup wizard and completion persists", flush=True)
+                return
             if os.environ.get("DEEPIFY_PERFORMANCE_VALIDATION") == "1":
                 time.sleep(5)
                 measure("idle, empty queue")
