@@ -238,7 +238,26 @@ pub mod domain {
     }
 
     pub fn implicit_app_allowed(app_id: Option<&str>, focus_app: &str) -> bool {
-        app_id.is_none() || app_id == Some(focus_app)
+        app_id.is_none_or(|id| id.trim().is_empty())
+            || app_id == Some(focus_app)
+            || matches!(
+                app_id,
+                Some(
+                    "firefox"
+                        | "firefox-esr"
+                        | "zen"
+                        | "zen-beta"
+                        | "zen-alpha"
+                        | "org.mozilla.firefox"
+                        | "app.zen_browser.zen"
+                        | "noctalia-shell"
+                        | "org.quickshell"
+                        | "org.freedesktop.impl.portal.desktop.gtk"
+                        | "org.freedesktop.impl.portal.desktop.kde"
+                        | "polkit-gnome-authentication-agent-1"
+                        | "org.kde.polkit-kde-authentication-agent-1"
+                )
+            )
     }
 }
 
@@ -246,6 +265,8 @@ pub mod audio;
 pub mod browser;
 #[cfg(target_os = "linux")]
 pub mod display;
+pub mod niri;
+mod platform_command;
 pub mod settings;
 pub mod storage;
 
