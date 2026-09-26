@@ -10,16 +10,18 @@ const fs = require("node:fs");
 const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
-const { spawn } = require("node:child_process");
+const { spawn, execFileSync } = require("node:child_process");
 
 const root = path.resolve(__dirname, "../..");
 const firefox = process.env.FIREFOX_BIN || "firefox";
 const browserName = path.basename(firefox).toLowerCase().includes("zen") ? "Zen" : "Firefox";
 const privateWindow = process.env.DEEPIFY_PRIVATE_WINDOW === "1";
+const signedInstall = process.env.DEEPIFY_SIGNED_INSTALL === "1";
 const lifecycleMode = process.env.DEEPIFY_LIFECYCLE_MODE;
-const extension = path.join(root, "extensions/firefox");
-const nativeHost = path.join(root, "target/debug/deepify-browser-native-host");
-const lifecycleHarness = path.join(root, "target/debug/examples/phase3_lifecycle");
+const platformMode = lifecycleMode?.startsWith("platform-");
+const extension = process.env.DEEPIFY_EXTENSION_PATH || path.join(root, "extensions/firefox");
+const nativeHost = process.env.DEEPIFY_NATIVE_HOST || path.join(root, "target/debug/deepify-browser-native-host");
+const lifecycleHarness = path.join(root, platformMode ? "target/debug/examples/phase4_platform" : "target/debug/examples/phase3_lifecycle");
 const extensionId = "focus@deepify.local";
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 const unique = () => `test-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -100,7 +102,7 @@ async function run() {
   const profile = path.join(temp, "profile");
   const port = 2900 + Math.floor(Math.random() * 400);
   fs.mkdirSync(home, { recursive: true }); fs.mkdirSync(runtime, { mode: 0o700 }); fs.mkdirSync(profile);
-  fs.writeFileSync(path.join(profile, "user.js"), `user_pref("marionette.port", ${port});\n`);
+  fs.writeFileSync(path.join(profile, "user.js"), `user_pref("marionette.port", ${port});\nuser_pref("xpinstall.signatures.required", true);\n`);
   const hostDirectory = path.join(home, ".mozilla", "native-messaging-hosts");
   fs.mkdirSync(hostDirectory, { recursive: true });
   fs.writeFileSync(path.join(hostDirectory, "com.deepify.browser.json"), JSON.stringify({
@@ -108,7 +110,12 @@ async function run() {
   }));
   const socketDirectory = path.join(runtime, "deepify"); fs.mkdirSync(socketDirectory, { mode: 0o700 });
   const socketPath = path.join(socketDirectory, "browser-v1.sock");
-  const localServer = http.createServer((_request, response) => {
+  const localServer = http.createServer((request, response) => {
+    if (request.url === "/redirect") {
+      response.writeHead(302, { location: "https://example.org/phase5-redirect" });
+      response.end();
+      return;
+    }
     response.writeHead(200, { "content-type": "text/html" });
     response.end("<title>Local Deepify fixture</title>");
   });
@@ -121,19 +128,20 @@ async function run() {
   let lifecycleOutput = "";
   let lifecycleExit;
   const pairingRecord = path.join(temp, "pairing-token-hash");
+  const originalDnd = platformMode ? JSON.parse(execFileSync("noctalia-shell", ["ipc", "call", "state", "all"], { encoding:"utf8" })).state.doNotDisturb : undefined;
   const launchLifecycle = (mode) => {
     lifecycleOutput = "";
     lifecycleExit = undefined;
-    lifecycle = spawn(lifecycleHarness, [mode], {
-      env: { ...process.env, XDG_RUNTIME_DIR: runtime, DEEPIFY_PAIRING_RECORD: pairingRecord },
-      stdio: ["ignore", "pipe", "pipe"],
+    lifecycle = spawn(lifecycleHarness, [platformMode ? "session" : mode], {
+      env: { ...process.env, XDG_RUNTIME_DIR: platformMode ? process.env.XDG_RUNTIME_DIR : runtime, DEEPIFY_BROWSER_RUNTIME: runtime, DEEPIFY_PAIRING_RECORD: pairingRecord },
+      stdio: [platformMode ? "pipe" : "ignore", "pipe", "pipe"],
     });
     lifecycle.stdout.on("data", (value) => { lifecycleOutput += value; });
     lifecycle.stderr.on("data", (value) => { lifecycleOutput += value; });
     lifecycle.on("exit", (code) => { lifecycleExit = code; });
   };
   if (lifecycleMode) {
-    assert.ok(["desktop-loss", "browser-restart", "startup-recovery"].includes(lifecycleMode), "unknown lifecycle mode");
+    assert.ok(["desktop-loss", "browser-restart", "startup-recovery", "platform-finish", "platform-failure"].includes(lifecycleMode), "unknown lifecycle mode");
     launchLifecycle(lifecycleMode === "startup-recovery" ? "startup-first" : lifecycleMode);
   } else {
     server = net.createServer((socket) => {
@@ -152,7 +160,10 @@ async function run() {
     await new Promise((resolve, reject) => server.listen(socketPath, (error) => error ? reject(error) : resolve()));
     fs.chmodSync(socketPath, 0o600);
   }
-  const browserArguments = ["--headless", "--marionette", "--no-remote", "--new-instance", "--profile", profile];
+  // Firefox 155+ requires explicit system access to inspect the extension's
+  // privileged blocked page. This applies only to this disposable test process.
+  // https://firefox-source-docs.mozilla.org/remote/Prefs.html#remote-system-access-check-enabled
+  const browserArguments = ["--headless", "--marionette", "--remote-allow-system-access", "--no-remote", "--new-instance", "--profile", profile];
   if (privateWindow) browserArguments.push("--private-window");
   browserArguments.push("about:blank");
   const launchBrowser = () => {
@@ -167,20 +178,38 @@ async function run() {
   let client = await marionette(port);
   try {
     await client.command("WebDriver:NewSession", { capabilities: { alwaysMatch: { pageLoadStrategy: "none" } } });
-    console.error(`${browserName} harness: installing extension`);
-    await client.command("Addon:Install", { path: extension, temporary: true });
     if (lifecycleMode) {
-      await waitFor("Rust desktop broker readiness", () => lifecycleOutput.includes("PHASE3_LIFECYCLE_READY"), 30000);
-      console.error(`${browserName} harness: verifying ${lifecycleMode}`);
-      await client.command("WebDriver:ExecuteScript", {
-        script: "const destination = arguments[0]; setTimeout(() => window.location.assign(destination), 0); return true;",
-        args: [`https://example.org/phase3-${lifecycleMode}`],
+      // Arrange the original before pairing can start policy. Zen may otherwise
+      // restore an earlier startup page correctly while this test expects ours.
+      const destination = `https://example.org/phase3-${lifecycleMode}`;
+      await client.command("WebDriver:Navigate", { url: destination });
+      await waitFor("lifecycle original destination", async () => {
+        const result = await client.command("WebDriver:GetCurrentURL");
+        return (result.value ?? result).startsWith(destination);
       });
+    }
+    console.error(`${browserName} harness: installing extension`);
+    await client.command("Addon:Install", { path: extension, temporary: !signedInstall });
+    if (lifecycleMode) {
+      await waitFor("Rust desktop broker readiness", () => {
+        assert.equal(lifecycleExit, undefined, lifecycleOutput);
+        return lifecycleOutput.includes(platformMode ? "PHASE4_PLATFORM_READY" : "PHASE3_LIFECYCLE_READY");
+      }, 30000);
+      console.error(`${browserName} harness: verifying ${lifecycleMode}`);
       const currentUrl = async () => {
         const response = await client.command("WebDriver:GetCurrentURL");
         return response.value ?? response;
       };
       await waitFor("blocked lifecycle destination", async () => (await currentUrl()).endsWith("/blocked.html"));
+      if (platformMode) {
+        lifecycle.stdin.write(lifecycleMode === "platform-failure" ? "failure\n" : "finish\n");
+        await waitFor("combined platform cleanup", () => lifecycleOutput.includes("PHASE4_PLATFORM_CLEANUP_COMPLETE"), 15000);
+        await waitFor("restoration after platform cleanup", async () => (await currentUrl()).startsWith(`https://example.org/phase3-${lifecycleMode}`));
+        await waitFor("platform harness exit", () => lifecycleExit !== undefined);
+        assert.equal(lifecycleExit,0,lifecycleOutput);
+        console.log(`${browserName} combined browser/Niri/Noctalia ${lifecycleMode}: PASS`);
+        return;
+      }
       if (lifecycleMode === "desktop-loss" || lifecycleMode === "startup-recovery") {
         await waitFor("Rust desktop broker exit", () => lifecycleExit !== undefined, 10000);
         assert.equal(lifecycleExit, 0, lifecycleOutput);
@@ -196,13 +225,20 @@ async function run() {
         console.log(`${browserName} desktop-process-loss restoration: PASS`);
         return;
       }
-      browser.kill("SIGTERM");
+      // Exercise an ordinary browser quit and wait for profile locks/storage to
+      // settle before relaunch. SIGTERM is a separate process-loss scenario.
+      await client.command("Marionette:Quit", { flags: ["eAttemptQuit"] });
+      await waitFor("browser process exit", () => browser.exitCode !== null || browser.signalCode !== null, 15000);
       await waitFor("Rust broker detects browser disconnect", () => lifecycleOutput.includes("PHASE3_BROWSER_DISCONNECTED"), 15000);
       browser = launchBrowser();
       client = await marionette(port);
       await client.command("WebDriver:NewSession", { capabilities: { alwaysMatch: { pageLoadStrategy: "none" } } });
-      await client.command("Addon:Install", { path: extension, temporary: true });
-      await waitFor("idle browser reconnect", () => lifecycleOutput.includes("PHASE3_BROWSER_RECONNECTED_IDLE"), 20000);
+      await client.command("Addon:Install", { path: extension, temporary: !signedInstall });
+      await waitFor("idle browser reconnect", () => {
+        if (lifecycleOutput.includes("PHASE3_BROWSER_RECONNECTED_IDLE")) return true;
+        assert.equal(lifecycleExit, undefined, lifecycleOutput);
+        return false;
+      }, 20000).catch(error => { throw new Error(`${error.message}; broker: ${lifecycleOutput}`); });
       await waitFor("Rust broker exit", () => lifecycleExit !== undefined, 10000);
       assert.equal(lifecycleExit, 0, lifecycleOutput);
       console.log(`${browserName} browser-close/restart idle reconnect: PASS`);
@@ -257,9 +293,25 @@ async function run() {
     };
     await waitFor("existing blocked page", async () => (await currentUrl()).endsWith("/blocked.html"));
     await waitFor("blocked-page keyboard focus", async () => {
-      const response = await client.command("WebDriver:ExecuteScript", { script: "return document.activeElement.tagName;" });
+      const response = await client.command("WebDriver:ExecuteScript", { script: "return document.activeElement?.tagName ?? null;" });
       return (response.value ?? response) === "MAIN";
     });
+    await client.command("WebDriver:ExecuteScript", { script: "document.querySelector('#new-tab').focus(); return true;" });
+    send(peer, "state", { health: "active", session_id: "phase3-session", timer_state: "working", remaining_seconds: 598 });
+    await waitFor("live blocked-page countdown without focus loss", async () => {
+      const response = await client.command("WebDriver:ExecuteScript", { script: "return document.querySelector('#remaining')?.textContent === '09:58' && document.activeElement?.id === 'new-tab';" });
+      return response.value ?? response;
+    });
+    const chromeScript = async (script) => {
+      await client.command("Marionette:SetContext", { value: "chrome" });
+      try {
+        const result = await client.command("WebDriver:ExecuteScript", { script });
+        return result.value ?? result;
+      } finally { await client.command("Marionette:SetContext", { value: "content" }); }
+    };
+    await chromeScript("for (const label of ['surviving', 'closed']) { const tab=gBrowser.addTab('https://example.org/phase5-container-'+label, {userContextId:1,triggeringPrincipal:Services.scriptSecurityManager.getSystemPrincipal()}); tab.setAttribute('deepify-fixture',label); } return true;");
+    await waitFor("container tab restriction without cookies permission", () => chromeScript("return ['surviving','closed'].every(label => Array.from(gBrowser.tabs).some(tab => tab.getAttribute('deepify-fixture')===label && tab.userContextId===1 && tab.linkedBrowser.currentURI.spec.endsWith('/blocked.html')));"));
+    await chromeScript("gBrowser.removeTab(Array.from(gBrowser.tabs).find(tab => tab.getAttribute('deepify-fixture')==='closed')); return true;");
     console.error(`${browserName} harness: checking Back and reload protection`);
     await client.command("WebDriver:ExecuteScript", { script: "history.back(); return true;" });
     await waitFor("Back remains blocked", async () => (await currentUrl()).endsWith("/blocked.html"));
@@ -271,6 +323,11 @@ async function run() {
       args: [localUrl],
     });
     await waitFor("loopback page", async () => (await currentUrl()).startsWith(localUrl));
+    await client.command("WebDriver:ExecuteScript", {
+      script: "setTimeout(() => location.assign(arguments[0]), 0); return true;",
+      args: [new URL("/redirect", localUrl).href],
+    });
+    await waitFor("redirect to public destination is blocked", async () => (await currentUrl()).endsWith("/blocked.html"));
     console.error(`${browserName} harness: navigating to blocked destination`);
     await client.command("WebDriver:ExecuteScript", {
       script: "const destination = arguments[0]; setTimeout(() => window.location.assign(destination), 0); return true;",
@@ -284,6 +341,10 @@ async function run() {
     assert.equal(JSON.stringify(events).includes("example.org"), false, "desktop peer must never receive a destination");
     console.error(`${browserName} harness: checking paused navigation protection`);
     send(peer, "state", { health: "active", session_id: "phase3-session", timer_state: "paused", remaining_seconds: 599 });
+    await waitFor("live blocked-page pause state", async () => {
+      const response = await client.command("WebDriver:ExecuteScript", { script: "return document.querySelector('#remaining')?.textContent === '09:59 · Paused';" });
+      return response.value ?? response;
+    });
     await client.command("WebDriver:ExecuteScript", {
       script: "const destination = arguments[0]; setTimeout(() => window.location.assign(destination), 0); return true;",
       args: ["https://example.org/phase3-paused"],
@@ -292,7 +353,8 @@ async function run() {
     console.error(`${browserName} harness: requesting restoration`);
     send(peer, "stop_session", { session_id: "phase3-session" });
     await waitFor("restored original tab", async () => (await currentUrl()).startsWith("https://example.org/phase3-existing"));
-    assert.ok(events.some((event) => event.type === "restore_complete" && event.restored_count === 1));
+    await waitFor("restoration acknowledgment", () => events.some((event) => event.type === "restore_complete" && event.restored_count >= 1));
+    await waitFor("container restoration and closed-tab preservation", () => chromeScript("return Array.from(gBrowser.tabs).some(tab => tab.getAttribute('deepify-fixture')==='surviving' && tab.userContextId===1 && tab.linkedBrowser.currentURI.spec==='https://example.org/phase5-container-surviving') && !Array.from(gBrowser.tabs).some(tab => tab.getAttribute('deepify-fixture')==='closed');"));
     console.error(`${browserName} harness: validating native disconnect restoration`);
     send(peer, "start_session", { session_id: "phase3-disconnect", timer_state: "working", remaining_seconds: 600, rules: [] });
     await waitFor("second start result", () => events.filter((event) => event.type === "start_result" && event.accepted).length === 2);
@@ -308,6 +370,7 @@ async function run() {
     console.error(`${browserName} harness: cleanup`);
     try { await client.command("WebDriver:DeleteSession"); } catch { /* browser may already have exited */ }
     browser.kill("SIGTERM"); lifecycle?.kill("SIGTERM"); server?.close(); localServer.close(); fs.rmSync(temp, { recursive: true, force: true });
+    if (platformMode) execFileSync("noctalia-shell", ["ipc", "call", "notifications", originalDnd ? "enableDND" : "disableDND"], { stdio:"ignore" });
   }
 }
 
