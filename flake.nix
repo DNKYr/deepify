@@ -1,5 +1,5 @@
 {
-  description = "Deepify local focus prototype";
+  description = "Deepify local focus desktop";
 
   # Immutable nixos-26.05 snapshot served by FlakeHub's public cache.
   inputs.nixpkgs.url = "https://flakehub.com/f/NixOS/nixpkgs/0.2605.1012700.tar.gz";
@@ -8,13 +8,15 @@
     let
       systems = [ "x86_64-linux" "aarch64-linux" ];
       eachSystem = f: nixpkgs.lib.genAttrs systems (system: f (import nixpkgs { inherit system; }));
-    in {
+    in
+    {
       packages = eachSystem (pkgs:
         let
           linuxLibraries = with pkgs; [
             alsa-lib
             dbus
             glib
+            gsettings-desktop-schemas
             gtk3
             libayatana-appindicator
             openssl
@@ -31,10 +33,12 @@
             };
             nativeBuildInputs = with pkgs; [
               clippy
+              desktop-file-utils
               nodejs_24
               npmHooks.npmConfigHook
               pkg-config
               rustfmt
+              wrapGAppsHook3
             ];
             buildInputs = linuxLibraries;
             preBuild = "npm run build";
@@ -48,6 +52,23 @@
               "--features"
               "deepify-desktop/custom-protocol"
             ];
+            postInstall = ''
+              install -Dm644 apps/desktop/src-tauri/icons/icon.svg \
+                "$out/share/icons/hicolor/scalable/apps/com.deepify.desktop.svg"
+              mkdir -p "$out/share/applications"
+              cat > "$out/share/applications/com.deepify.desktop.desktop" <<EOF
+              [Desktop Entry]
+              Type=Application
+              Name=Deepify
+              Comment=Local focus sessions with application and website restrictions
+              Exec=$out/bin/deepify
+              Icon=com.deepify.desktop
+              Terminal=false
+              Categories=Office;Utility;
+              StartupWMClass=com.deepify.desktop
+              EOF
+              desktop-file-validate "$out/share/applications/com.deepify.desktop.desktop"
+            '';
             preCheck = ''
               npm test
               npm run typecheck
@@ -82,7 +103,8 @@
             touch -d @1 "$workdir"/*
             (cd "$workdir" && zip -X -q -r "$out/deepify-focus-companion.xpi" .)
           '';
-        in {
+        in
+        {
           default = pkgs.symlinkJoin {
             name = "deepify-0.1.0";
             paths = [ basePackage nativeManifest ];
@@ -99,6 +121,7 @@
             dbus
             ffmpeg-headless.bin
             glib
+            gsettings-desktop-schemas
             gtk3
             libayatana-appindicator
             nodejs_24
@@ -110,7 +133,8 @@
             webkitgtk_4_1
           ];
           shellHook = ''
-            echo "Deepify development shell (Phase 3 browser integration; Niri/Noctalia simulated)"
+            export XDG_DATA_DIRS="${pkgs.lib.removeSuffix "/glib-2.0/schemas" (pkgs.glib.getSchemaPath pkgs.gtk3)}:${pkgs.lib.removeSuffix "/glib-2.0/schemas" (pkgs.glib.getSchemaPath pkgs.gsettings-desktop-schemas)}:''${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+            echo "Deepify development shell (Phase 5 refinement and release verification)"
           '';
         };
       });
