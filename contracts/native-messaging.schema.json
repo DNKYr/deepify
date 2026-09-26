@@ -4,30 +4,552 @@
   "title": "Deepify browser protocol v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "type", "message_id"],
+  "required": [
+    "version",
+    "type",
+    "message_id"
+  ],
   "properties": {
-    "version": { "const": 1 },
-    "type": { "enum": ["hello", "pair", "pair_result", "heartbeat", "heartbeat_ack", "start_session", "start_result", "stop_session", "stop_result", "status", "state", "blocked_attempt", "integration_error", "restore_complete", "restore_error"] },
-    "message_id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\x00-\\x1F\\x7F]+$" },
-    "request_id": { "type": "string", "minLength": 1, "maxLength": 128 },
-    "token": { "type": "string", "minLength": 43, "maxLength": 128 },
-    "extension_id": { "const": "focus@deepify.local" },
-    "browser_kind": { "enum": ["firefox", "zen"] },
-    "profile_label": { "type": "string", "minLength": 1, "maxLength": 128 },
-    "capabilities": { "type": "array", "maxItems": 16, "items": { "enum": ["top_level_web_request", "tab_restore", "container_tabs"] }, "uniqueItems": true },
-    "session_id": { "type": "string", "minLength": 1, "maxLength": 128 },
-    "timer_state": { "enum": ["working", "paused", "inactive"] },
-    "remaining_seconds": { "type": "integer", "minimum": 0, "maximum": 86400 },
-    "rules": { "type": "array", "maxItems": 1024, "items": { "type": "object", "additionalProperties": false, "required": ["host", "path"], "properties": { "host": { "type": "string", "minLength": 1, "maxLength": 253 }, "path": { "type": "string", "minLength": 1, "maxLength": 2048 } } } },
-    "accepted": { "type": "boolean" },
-    "health": { "enum": ["pending_pair", "healthy_idle", "active", "unhealthy", "cleanup_required"] },
-    "blocked_count": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
-    "restored_count": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
-    "error_code": { "enum": ["unpaired", "rejected", "invalid_request", "permission_lost", "session_mismatch", "restore_failed", "internal"] }
+    "version": {
+      "const": 1
+    },
+    "type": {
+      "enum": [
+        "hello",
+        "pair",
+        "pair_result",
+        "heartbeat",
+        "heartbeat_ack",
+        "start_session",
+        "start_result",
+        "stop_session",
+        "stop_result",
+        "status",
+        "state",
+        "blocked_attempt",
+        "integration_error",
+        "restore_complete",
+        "restore_error"
+      ]
+    },
+    "message_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$"
+    },
+    "request_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$"
+    },
+    "token": {
+      "type": "string",
+      "minLength": 43,
+      "maxLength": 128,
+      "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$"
+    },
+    "extension_id": {
+      "const": "focus@deepify.local"
+    },
+    "browser_kind": {
+      "enum": [
+        "firefox",
+        "zen"
+      ]
+    },
+    "profile_label": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$"
+    },
+    "capabilities": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "enum": [
+          "top_level_web_request",
+          "tab_restore",
+          "container_tabs"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$"
+    },
+    "timer_state": {
+      "enum": [
+        "working",
+        "paused",
+        "inactive"
+      ]
+    },
+    "remaining_seconds": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 86400
+    },
+    "rules": {
+      "type": "array",
+      "maxItems": 1024,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "host",
+          "path"
+        ],
+        "properties": {
+          "host": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 253,
+            "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$"
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048,
+            "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$"
+          }
+        }
+      }
+    },
+    "accepted": {
+      "type": "boolean"
+    },
+    "health": {
+      "enum": [
+        "pending_pair",
+        "healthy_idle",
+        "active",
+        "unhealthy",
+        "cleanup_required"
+      ]
+    },
+    "blocked_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "restored_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "error_code": {
+      "enum": [
+        "unpaired",
+        "rejected",
+        "invalid_request",
+        "permission_lost",
+        "session_mismatch",
+        "restore_failed",
+        "internal"
+      ]
+    }
   },
   "allOf": [
-    { "if": { "properties": { "type": { "enum": ["pair_result", "heartbeat_ack", "start_result", "stop_result"] } } }, "then": { "required": ["request_id"] } },
-    { "if": { "properties": { "type": { "const": "hello" } } }, "then": { "required": ["token", "extension_id", "browser_kind", "profile_label", "capabilities"] } },
-    { "if": { "properties": { "type": { "enum": ["start_session", "stop_session", "blocked_attempt"] } } }, "then": { "required": ["session_id"] } }
-  ]
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "hello"
+          }
+        }
+      },
+      "then": {
+        "propertyNames": {
+          "enum": [
+            "version",
+            "type",
+            "message_id",
+            "request_id",
+            "token",
+            "extension_id",
+            "browser_kind",
+            "profile_label",
+            "capabilities"
+          ]
+        },
+        "required": [
+          "token",
+          "extension_id",
+          "browser_kind",
+          "profile_label",
+          "capabilities"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "pair"
+          }
+        }
+      },
+      "then": {
+        "propertyNames": {
+          "enum": [
+            "version",
+            "type",
+            "message_id",
+            "request_id",
+            "token"
+          ]
+        },
+        "required": [
+          "token"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "pair_result"
+          }
+        }
+      },
+      "then": {
+        "propertyNames": {
+          "enum": [
+            "version",
+            "type",
+            "message_id",
+            "request_id",
+            "accepted",
+            "error_code"
+          ]
+        },
+        "required": [
+          "accepted",
+          "request_id"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "heartbeat"
+          }
+        }
+      },
+      "then": {
+        "propertyNames": {
+          "enum": [
+            "version",
+            "type",
+            "message_id",
+            "request_id"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "heartbeat_ack"
+          }
+        }
+      },
+      "then": {
+        "propertyNames": {
+          "enum": [
+            "version",
+            "type",
+            "message_id",
+            "request_id"
+          ]
+        },
+        "required": [
+          "request_id"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "status"
+          }
+        }
+      },
+      "then": {
+        "propertyNames": {
+          "enum": [
+            "version",
+            "type",
+            "message_id",
+            "request_id"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "start_session"
+          }
+        }
+      },
+      "then": {
+        "propertyNames": {
+          "enum": [
+            "version",
+            "type",
+            "message_id",
+            "request_id",
+            "session_id",
+            "timer_state",
+            "remaining_seconds",
+            "rules"
+          ]
+        },
+        "required": [
+          "session_id",
+          "timer_state",
+          "remaining_seconds",
+          "rules"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "start_result"
+          }
+        }
+      },
+      "then": {
+        "propertyNames": {
+          "enum": [
+            "version",
+            "type",
+            "message_id",
+            "request_id",
+            "session_id",
+            "accepted",
+            "blocked_count",
+            "error_code"
+          ]
+        },
+        "required": [
+          "session_id",
+          "accepted",
+          "request_id"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "stop_session"
+          }
+        }
+      },
+      "then": {
+        "propertyNames": {
+          "enum": [
+            "version",
+            "type",
+            "message_id",
+            "request_id",
+            "session_id"
+          ]
+        },
+        "required": [
+          "session_id"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "stop_result"
+          }
+        }
+      },
+      "then": {
+        "propertyNames": {
+          "enum": [
+            "version",
+            "type",
+            "message_id",
+            "request_id",
+            "session_id",
+            "accepted",
+            "restored_count",
+            "error_code"
+          ]
+        },
+        "required": [
+          "session_id",
+          "accepted",
+          "request_id"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "state"
+          }
+        }
+      },
+      "then": {
+        "propertyNames": {
+          "enum": [
+            "version",
+            "type",
+            "message_id",
+            "request_id",
+            "health",
+            "timer_state",
+            "remaining_seconds",
+            "session_id"
+          ]
+        },
+        "required": [
+          "health",
+          "timer_state",
+          "remaining_seconds"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "blocked_attempt"
+          }
+        }
+      },
+      "then": {
+        "propertyNames": {
+          "enum": [
+            "version",
+            "type",
+            "message_id",
+            "request_id",
+            "session_id"
+          ]
+        },
+        "required": [
+          "session_id"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "integration_error"
+          }
+        }
+      },
+      "then": {
+        "propertyNames": {
+          "enum": [
+            "version",
+            "type",
+            "message_id",
+            "request_id",
+            "error_code",
+            "session_id"
+          ]
+        },
+        "required": [
+          "error_code"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "restore_complete"
+          }
+        }
+      },
+      "then": {
+        "propertyNames": {
+          "enum": [
+            "version",
+            "type",
+            "message_id",
+            "request_id",
+            "session_id",
+            "restored_count"
+          ]
+        },
+        "required": [
+          "session_id",
+          "restored_count"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "restore_error"
+          }
+        }
+      },
+      "then": {
+        "propertyNames": {
+          "enum": [
+            "version",
+            "type",
+            "message_id",
+            "request_id",
+            "error_code",
+            "session_id"
+          ]
+        },
+        "required": [
+          "error_code"
+        ]
+      }
+    }
+  ],
+  "description": "Version 1 payload shapes. The transport additionally limits UTF-8 body bytes to 256 KiB and string byte lengths to their listed maxima."
 }
