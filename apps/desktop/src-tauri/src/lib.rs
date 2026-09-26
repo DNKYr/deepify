@@ -146,7 +146,7 @@ pub mod domain {
         }
         let candidate = if raw.starts_with("http://") || raw.starts_with("https://") {
             raw.to_string()
-        } else if raw.parse::<std::net::IpAddr>().is_ok() {
+        } else if raw.parse::<std::net::Ipv6Addr>().is_ok() {
             format!("http://[{raw}]")
         } else {
             format!("http://{raw}")

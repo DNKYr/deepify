@@ -15,6 +15,7 @@ function loadBackground({ tabs = [] } = {}) {
     postMessage(message) { posted.push(message); },
   };
   const browser = {
+    permissions: { contains: async () => true, onRemoved: { addListener(listener) { listeners.permissionsRemoved = listener; } } },
     runtime: {
       connectNative() { return port; },
       getURL(path) { return `moz-extension://deepify/${path}`; },
@@ -40,7 +41,7 @@ function loadBackground({ tabs = [] } = {}) {
     clearTimeout,
   });
   vm.runInContext(`${source}\nglobalThis.__deepifyBackgroundTest = { destinationAllowed, validateMessage, onNativeMessage, state };`, context);
-  return { api: context.__deepifyBackgroundTest, listeners, posted, updates };
+  return { api: context.__deepifyBackgroundTest, listeners, posted, updates, browser };
 }
 
 test("production background matcher follows every shared URL fixture", async () => {
@@ -57,6 +58,10 @@ test("production background rejects unsafe native messages", () => {
   assert.equal(api.validateMessage({ version: 1, type: "status", message_id: "id", url: "https://private.invalid" }), false);
   assert.equal(api.validateMessage({ version: 1, type: "state", message_id: "id", health: "active", timer_state: "paused", remaining_seconds: 10 }), true);
   assert.equal(api.validateMessage({ version: 2, type: "status", message_id: "id" }), false);
+  assert.equal(api.validateMessage({ version: 1, type: "unknown", message_id: "id" }), false);
+  assert.equal(api.validateMessage({ version: 1, type: "status", message_id: "id", rules: [] }), false);
+  assert.equal(api.validateMessage({ version: 1, type: "start_session", message_id: "id", session_id: "one", timer_state: "working", remaining_seconds: 60, rules: [{ host: 3, path: "/" }] }), false);
+  assert.equal(api.validateMessage({ version: 1, type: "state", message_id: "id", health: "pretend", timer_state: "paused", remaining_seconds: 10 }), false);
 });
 
 test("paired production background restricts existing tabs and restores them on stop", async () => {
@@ -98,4 +103,82 @@ test("production background re-blocks history navigation that bypasses webReques
   listeners.tabUpdated(7, { url: "https://history.example/path" }, { id: 7, url: "https://history.example/path" });
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(updates, [{ tabId: 7, url: "moz-extension://deepify/blocked.html" }]);
+});
+
+
+test("a failed restoration is reported and retained until the same session retries", async () => {
+  const { api, posted, browser } = loadBackground({ tabs: [{ id: 7, url: "https://restore.example/original" }] });
+  await api.onNativeMessage({ version: 1, type: "pair_result", message_id: "pair", request_id: "hello", accepted: true });
+  await api.onNativeMessage({ version: 1, type: "start_session", message_id: "start", session_id: "one", timer_state: "working", remaining_seconds: 60, rules: [] });
+  const update = browser.tabs.update;
+  browser.tabs.update = async () => { throw new Error("temporary restore failure"); };
+  await api.onNativeMessage({ version: 1, type: "stop_session", message_id: "stop", session_id: "one" });
+  assert.equal(posted.at(-1).accepted, false);
+  assert.equal(api.state.originals.size, 1);
+  await api.onNativeMessage({ version: 1, type: "status", message_id: "status" });
+  assert.equal(posted.at(-1).health, "cleanup_required");
+  assert.equal(posted.at(-1).session_id, "one");
+  browser.tabs.update = update;
+  await api.onNativeMessage({ version: 1, type: "stop_session", message_id: "retry", session_id: "one" });
+  assert.equal(posted.at(-1).accepted, true);
+  assert.equal(api.state.originals.size, 0);
+  assert.equal(api.state.cleanupSessionId, null);
+  assert.equal(JSON.stringify(posted).includes("restore.example"), false);
+});
+
+test("permission removal restores tabs and reports unhealthy rather than continuing protection", async () => {
+  const { api, browser, listeners, posted, updates } = loadBackground({ tabs: [{ id: 7, url: "https://restore.example/original" }] });
+  await api.onNativeMessage({ version: 1, type: "pair_result", message_id: "pair", request_id: "hello", accepted: true });
+  await api.onNativeMessage({ version: 1, type: "start_session", message_id: "start", session_id: "one", timer_state: "working", remaining_seconds: 60, rules: [] });
+  browser.permissions.contains = async () => false;
+  await listeners.permissionsRemoved();
+  assert.equal(api.state.session, null);
+  assert.equal(updates.at(-1).url, "https://restore.example/original");
+  assert.equal(posted.at(-1).error_code, "permission_lost");
+  await api.onNativeMessage({ version: 1, type: "status", message_id: "status" });
+  assert.equal(posted.at(-1).health, "unhealthy");
+});
+
+test("closed blocked tabs are not recreated during restoration", async () => {
+  const tabs = [{ id: 7, url: "https://closed.example/original" }];
+  const { api, posted, updates } = loadBackground({ tabs });
+  await api.onNativeMessage({ version: 1, type: "pair_result", message_id: "pair", request_id: "hello", accepted: true });
+  await api.onNativeMessage({ version: 1, type: "start_session", message_id: "start", session_id: "one", timer_state: "working", remaining_seconds: 60, rules: [] });
+  tabs.length = 0;
+  await api.onNativeMessage({ version: 1, type: "stop_session", message_id: "stop", session_id: "one" });
+  assert.equal(updates.length, 1);
+  assert.equal(posted.at(-1).accepted, true);
+  assert.equal(posted.at(-1).restored_count, 0);
+});
+
+test("stop waits for an in-flight restriction before restoring the original tab", async () => {
+  const { api, browser, listeners, updates, posted } = loadBackground({ tabs: [{ id: 7, url: "https://race.example/original" }] });
+  await listeners.nativeMessage({ version: 1, type: "pair_result", message_id: "pair", request_id: "hello", accepted: true });
+  const update = browser.tabs.update;
+  let release;
+  browser.tabs.update = async (id, value) => {
+    if (value.url.endsWith("blocked.html")) await new Promise((resolve) => { release = resolve; });
+    await update(id, value);
+  };
+  const starting = listeners.nativeMessage({ version: 1, type: "start_session", message_id: "start", session_id: "one", timer_state: "working", remaining_seconds: 60, rules: [] });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(typeof release, "function");
+  const stopping = listeners.nativeMessage({ version: 1, type: "stop_session", message_id: "stop", session_id: "one" });
+  release();
+  await Promise.all([starting, stopping]);
+  assert.equal(updates.at(-1).url, "https://race.example/original");
+  assert.equal(api.state.session, null);
+  assert.equal(posted.at(-1).accepted, true);
+});
+
+test("tab API failure reports a safe integration error and removes policy", async () => {
+  const { api, browser, listeners, posted } = loadBackground({ tabs: [{ id: 7, url: "https://failure.example/private" }] });
+  await listeners.nativeMessage({ version: 1, type: "pair_result", message_id: "pair", request_id: "hello", accepted: true });
+  browser.tabs.update = async () => { throw new Error("URL-bearing browser error must stay private"); };
+  await listeners.nativeMessage({ version: 1, type: "start_session", message_id: "start", session_id: "one", timer_state: "working", remaining_seconds: 60, rules: [] });
+  assert.equal(api.state.session, null);
+  assert.equal(api.state.cleanupSessionId, "one");
+  assert.equal(posted.at(-1).accepted, false);
+  assert.equal(posted.some((message) => message.type === "integration_error"), true);
+  assert.equal(JSON.stringify(posted).includes("URL-bearing"), false);
 });

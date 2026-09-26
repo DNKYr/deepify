@@ -1,29 +1,217 @@
 {
   "version": 1,
   "cases": [
-    {"url":"https://example.com/docs","rules":["example.com/docs"],"allowed":true},
-    {"url":"http://docs.example.com/docs/page?x=1","rules":["example.com/docs"],"allowed":true},
-    {"url":"https://example.com/blog","rules":["example.com/docs"],"allowed":false},
-    {"url":"https://other.example.net/docs","rules":["example.com/docs"],"allowed":false},
-    {"url":"https://example.com:8443/docs","rules":["example.com/docs"],"allowed":true},
-    {"url":"http://localhost:3000/dev","rules":[],"allowed":true},
-    {"url":"http://127.0.0.1:8080","rules":[],"allowed":true},
-    {"url":"http://127.42.0.9:8080","rules":[],"allowed":true},
-    {"url":"http://172.20.2.4","rules":[],"allowed":true},
-    {"url":"http://172.32.2.4","rules":[],"allowed":false},
-    {"url":"http://[::1]:8080","rules":[],"allowed":true},
-    {"url":"ftp://example.net/file","rules":[],"allowed":true},
-    {"url":"about:preferences","rules":[],"allowed":true},
-    {"url":"https://sub.example.com/docs/a","rules":["https://example.com/docs"],"allowed":true},
-    {"url":"https://example.com/docs2","rules":["example.com/docs"],"allowed":true},
-    {"url":"https://192.168.1.10/internal","rules":[],"allowed":true},
-    {"url":"https://10.0.0.20/internal","rules":[],"allowed":true},
-    {"url":"https://169.254.10.20/metadata","rules":[],"allowed":true},
-    {"url":"https://[fc00::1]/internal","rules":[],"allowed":true},
-    {"url":"https://[fe80::1]/internal","rules":[],"allowed":true},
-    {"url":"http://[::ffff:127.0.0.1]/","rules":[],"allowed":true},
-    {"url":"http://[::ffff:192.168.1.10]/","rules":[],"allowed":true},
-    {"url":"http://8.8.8.8/","rules":[],"allowed":false},
-    {"url":"not a URL","rules":[],"allowed":true}
+    {
+      "url": "https://example.com/docs",
+      "rules": [
+        "example.com/docs"
+      ],
+      "allowed": true
+    },
+    {
+      "url": "http://docs.example.com/docs/page?x=1",
+      "rules": [
+        "example.com/docs"
+      ],
+      "allowed": true
+    },
+    {
+      "url": "https://example.com/blog",
+      "rules": [
+        "example.com/docs"
+      ],
+      "allowed": false
+    },
+    {
+      "url": "https://other.example.net/docs",
+      "rules": [
+        "example.com/docs"
+      ],
+      "allowed": false
+    },
+    {
+      "url": "https://example.com:8443/docs",
+      "rules": [
+        "example.com/docs"
+      ],
+      "allowed": true
+    },
+    {
+      "url": "http://localhost:3000/dev",
+      "rules": [],
+      "allowed": true
+    },
+    {
+      "url": "http://127.0.0.1:8080",
+      "rules": [],
+      "allowed": true
+    },
+    {
+      "url": "http://127.42.0.9:8080",
+      "rules": [],
+      "allowed": true
+    },
+    {
+      "url": "http://172.20.2.4",
+      "rules": [],
+      "allowed": true
+    },
+    {
+      "url": "http://172.32.2.4",
+      "rules": [],
+      "allowed": false
+    },
+    {
+      "url": "http://[::1]:8080",
+      "rules": [],
+      "allowed": true
+    },
+    {
+      "url": "ftp://example.net/file",
+      "rules": [],
+      "allowed": true
+    },
+    {
+      "url": "about:preferences",
+      "rules": [],
+      "allowed": true
+    },
+    {
+      "url": "https://sub.example.com/docs/a",
+      "rules": [
+        "https://example.com/docs"
+      ],
+      "allowed": true
+    },
+    {
+      "url": "https://example.com/docs2",
+      "rules": [
+        "example.com/docs"
+      ],
+      "allowed": true
+    },
+    {
+      "url": "https://192.168.1.10/internal",
+      "rules": [],
+      "allowed": true
+    },
+    {
+      "url": "https://10.0.0.20/internal",
+      "rules": [],
+      "allowed": true
+    },
+    {
+      "url": "https://169.254.10.20/metadata",
+      "rules": [],
+      "allowed": true
+    },
+    {
+      "url": "https://[fc00::1]/internal",
+      "rules": [],
+      "allowed": true
+    },
+    {
+      "url": "https://[fe80::1]/internal",
+      "rules": [],
+      "allowed": true
+    },
+    {
+      "url": "http://[::ffff:127.0.0.1]/",
+      "rules": [],
+      "allowed": true
+    },
+    {
+      "url": "http://[::ffff:192.168.1.10]/",
+      "rules": [],
+      "allowed": true
+    },
+    {
+      "url": "http://8.8.8.8/",
+      "rules": [],
+      "allowed": false
+    },
+    {
+      "url": "not a URL",
+      "rules": [],
+      "allowed": true
+    },
+    {
+      "url": "https://fc-news.example/",
+      "rules": [],
+      "allowed": false
+    },
+    {
+      "url": "https://fd.example/",
+      "rules": [],
+      "allowed": false
+    },
+    {
+      "url": "https://fe80.example/",
+      "rules": [],
+      "allowed": false
+    },
+    {
+      "url": "https://10.example/",
+      "rules": [],
+      "allowed": false
+    },
+    {
+      "url": "https://127.example/",
+      "rules": [],
+      "allowed": false
+    },
+    {
+      "url": "https://192.168.example/",
+      "rules": [],
+      "allowed": false
+    },
+    {
+      "url": "https://172.20.example/",
+      "rules": [],
+      "allowed": false
+    },
+    {
+      "url": "http://[::ffff:8.8.8.8]/",
+      "rules": [],
+      "allowed": false
+    },
+    {
+      "url": "http://[2001:db8::1]/",
+      "rules": [],
+      "allowed": false
+    },
+    {
+      "url": "https://[broken",
+      "rules": [],
+      "allowed": false
+    },
+    {
+      "url": "https://example.com/Docs/page",
+      "rules": [
+        "example.com/Docs/"
+      ],
+      "allowed": true
+    },
+    {
+      "url": "https://example.com/docs/page",
+      "rules": [
+        "example.com/Docs/"
+      ],
+      "allowed": false
+    },
+    {
+      "url": "https://example.com/docs2",
+      "rules": [
+        "example.com/docs/"
+      ],
+      "allowed": false
+    },
+    {
+      "url": "http://[2001:db8::1]/Docs",
+      "rules": [
+        "[2001:db8::1]/Docs"
+      ],
+      "allowed": true
+    }
   ]
 }

@@ -38,6 +38,14 @@ fn website_matching_covers_all_local_address_classes_and_public_ips() {
 
 #[test]
 fn website_rules_ignore_scheme_and_port_and_validate_hosts_strictly() {
+    assert_eq!(
+        normalize_website("8.8.8.8").unwrap(),
+        ("8.8.8.8".into(), "/".into())
+    );
+    assert_eq!(
+        normalize_website("2001:db8::1").unwrap(),
+        ("2001:db8::1".into(), "/".into())
+    );
     let (host, path) = normalize_website("https://Example.COM:8443/docs").unwrap();
     assert_eq!((host.as_str(), path.as_str()), ("example.com", "/docs"));
     let rules = vec![WhitelistEntry::Website { host, path }];
