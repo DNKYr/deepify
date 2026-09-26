@@ -7,10 +7,10 @@ use std::{
     env, fs,
     io::{self, Read, Write},
     os::unix::{
-        fs::{MetadataExt, PermissionsExt},
+        fs::{FileTypeExt, MetadataExt, PermissionsExt},
         net::UnixStream,
     },
-    path::PathBuf,
+    path::{Path, PathBuf},
     thread,
 };
 
@@ -20,14 +20,31 @@ fn socket_path() -> io::Result<PathBuf> {
     let runtime = env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "XDG_RUNTIME_DIR is required"))?;
-    let metadata = fs::metadata(&runtime)?;
+    checked_socket_path(&runtime)
+}
+
+fn checked_socket_path(runtime: &Path) -> io::Result<PathBuf> {
+    let metadata = fs::symlink_metadata(runtime)?;
     if !secure_runtime_directory(&metadata, unsafe { libc::geteuid() }) {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             "insecure runtime directory",
         ));
     }
-    Ok(runtime.join(SOCKET_RELATIVE_PATH))
+    let path = runtime.join(SOCKET_RELATIVE_PATH);
+    let directory = fs::symlink_metadata(path.parent().unwrap())?;
+    let socket = fs::symlink_metadata(&path)?;
+    if !secure_runtime_directory(&directory, unsafe { libc::geteuid() })
+        || !socket.file_type().is_socket()
+        || socket.uid() != unsafe { libc::geteuid() }
+        || socket.permissions().mode() & 0o077 != 0
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "insecure browser socket",
+        ));
+    }
+    Ok(path)
 }
 
 fn secure_runtime_directory(metadata: &fs::Metadata, expected_uid: u32) -> bool {
@@ -146,5 +163,25 @@ mod tests {
             &fs::metadata(temp.path()).unwrap(),
             metadata.uid()
         ));
+    }
+
+    #[test]
+    fn host_rejects_redirected_or_public_socket_paths() {
+        use std::os::unix::net::UnixListener;
+        let root = tempfile::tempdir().unwrap();
+        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let directory = root.path().join("deepify");
+        fs::create_dir(&directory).unwrap();
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+        let socket = directory.join("browser-v1.sock");
+        let _listener = UnixListener::bind(&socket).unwrap();
+        fs::set_permissions(&socket, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(checked_socket_path(root.path()).is_ok());
+        fs::set_permissions(&socket, fs::Permissions::from_mode(0o666)).unwrap();
+        assert!(checked_socket_path(root.path()).is_err());
+        fs::set_permissions(&socket, fs::Permissions::from_mode(0o600)).unwrap();
+        let alias = root.path().join("alias");
+        std::os::unix::fs::symlink(root.path(), &alias).unwrap();
+        assert!(checked_socket_path(&alias).is_err());
     }
 }

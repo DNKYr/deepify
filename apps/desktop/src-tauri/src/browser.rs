@@ -12,12 +12,15 @@ use std::{
     os::{
         fd::AsRawFd,
         unix::{
-            fs::{FileTypeExt, MetadataExt, PermissionsExt},
+            fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt},
             net::{UnixListener, UnixStream},
         },
     },
-    path::PathBuf,
-    sync::{Arc, Mutex},
+    path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -25,6 +28,39 @@ use std::{
 const SOCKET_DIRECTORY: &str = "deepify";
 const SOCKET_NAME: &str = "browser-v1.sock";
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(5);
+const MAX_PEERS: usize = 8;
+const MAX_PENDING_REQUESTS: usize = 32;
+const MAX_EVENTS: usize = 4096;
+
+struct PeerPermit(Arc<AtomicUsize>);
+impl PeerPermit {
+    fn acquire(count: &Arc<AtomicUsize>) -> Option<Self> {
+        count
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
+                (value < MAX_PEERS).then_some(value + 1)
+            })
+            .ok()?;
+        Some(Self(count.clone()))
+    }
+}
+impl Drop for PeerPermit {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+struct PendingRequest {
+    state: Arc<Mutex<BrokerState>>,
+    id: String,
+}
+impl Drop for PendingRequest {
+    fn drop(&mut self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.pending_requests.remove(&self.id);
+            state.responses.remove(&self.id);
+        }
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BrowserPairing {
@@ -65,6 +101,7 @@ struct BrokerState {
     pending: Option<PendingProfile>,
     connected: Option<ConnectedProfile>,
     responses: HashMap<String, Envelope>,
+    pending_requests: HashSet<String>,
     blocked_events: Vec<String>,
     seen_blocked_events: HashSet<String>,
     integration_errors: Vec<String>,
@@ -113,12 +150,9 @@ fn constant_time_hash_match(left: &str, right: &str) -> bool {
     difference == 0
 }
 
-fn socket_path() -> io::Result<PathBuf> {
-    let runtime = env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "XDG_RUNTIME_DIR is required"))?;
+fn socket_path(runtime: &Path) -> io::Result<PathBuf> {
     let uid = unsafe { libc::geteuid() };
-    let metadata = fs::metadata(&runtime)?;
+    let metadata = fs::symlink_metadata(runtime)?;
     if !metadata.is_dir() || metadata.uid() != uid || metadata.permissions().mode() & 0o077 != 0 {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
@@ -126,8 +160,18 @@ fn socket_path() -> io::Result<PathBuf> {
         ));
     }
     let directory = runtime.join(SOCKET_DIRECTORY);
-    fs::create_dir_all(&directory)?;
-    fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
+    match fs::DirBuilder::new().mode(0o700).create(&directory) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error),
+    }
+    let metadata = fs::symlink_metadata(&directory)?;
+    if !metadata.is_dir() || metadata.uid() != uid || metadata.permissions().mode() & 0o077 != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "unsafe browser runtime directory",
+        ));
+    }
     Ok(directory.join(SOCKET_NAME))
 }
 
@@ -140,11 +184,15 @@ fn prepare_listener(path: &PathBuf) -> io::Result<UnixListener> {
                 "unsafe browser socket",
             ));
         }
-        if UnixStream::connect(path).is_ok() {
-            return Err(io::Error::new(
-                io::ErrorKind::AddrInUse,
-                "browser socket already has a listener",
-            ));
+        match UnixStream::connect(path) {
+            Ok(_) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::AddrInUse,
+                    "browser socket already has a listener",
+                ))
+            }
+            Err(error) if error.raw_os_error() == Some(libc::ECONNREFUSED) => {}
+            Err(error) => return Err(error),
         }
         fs::remove_file(path)?;
     }
@@ -239,7 +287,16 @@ fn healthy_state(message: &Envelope) -> bool {
 
 impl BrowserBroker {
     pub fn start(pairing: Option<BrowserPairing>) -> Result<Self, BrowserError> {
-        let socket_path = socket_path().map_err(|_| BrowserError::Socket)?;
+        let runtime = env::var_os("XDG_RUNTIME_DIR")
+            .map(PathBuf::from)
+            .ok_or(BrowserError::Socket)?;
+        Self::start_in(&runtime, pairing)
+    }
+
+    /// An explicit runtime root supports isolated integration validation without
+    /// changing process-global environment. The same ownership checks apply.
+    pub fn start_in(runtime: &Path, pairing: Option<BrowserPairing>) -> Result<Self, BrowserError> {
+        let socket_path = socket_path(runtime).map_err(|_| BrowserError::Socket)?;
         let listener = prepare_listener(&socket_path).map_err(|_| BrowserError::Socket)?;
         let broker = Self {
             state: Arc::new(Mutex::new(BrokerState {
@@ -249,6 +306,7 @@ impl BrowserBroker {
             socket_path,
         };
         let receiver = broker.clone();
+        let peers = Arc::new(AtomicUsize::new(0));
         thread::Builder::new()
             .name("deepify-browser-broker".into())
             .spawn(move || {
@@ -259,10 +317,21 @@ impl BrowserBroker {
                     if !peer_is_current_uid(&stream) {
                         continue;
                     }
+                    let Some(permit) = PeerPermit::acquire(&peers) else {
+                        continue;
+                    };
+                    if stream.set_read_timeout(Some(RESPONSE_TIMEOUT)).is_err()
+                        || stream.set_write_timeout(Some(RESPONSE_TIMEOUT)).is_err()
+                    {
+                        continue;
+                    }
                     let broker = receiver.clone();
                     let _ = thread::Builder::new()
                         .name("deepify-browser-peer".into())
-                        .spawn(move || broker.serve(stream));
+                        .spawn(move || {
+                            let _permit = permit;
+                            broker.serve(stream);
+                        });
                 }
             })
             .map_err(|_| BrowserError::Socket)?;
@@ -287,6 +356,22 @@ impl BrowserBroker {
                     break;
                 };
                 if text(&message, "extension_id").as_deref() != Some("focus@deepify.local") {
+                    break;
+                }
+                if !message
+                    .payload
+                    .get("capabilities")
+                    .and_then(Value::as_array)
+                    .is_some_and(|capabilities| {
+                        ["top_level_web_request", "tab_restore", "container_tabs"]
+                            .iter()
+                            .all(|required| {
+                                capabilities
+                                    .iter()
+                                    .any(|value| value.as_str() == Some(required))
+                            })
+                    })
+                {
                     break;
                 }
                 let Some(browser_kind) = text(&message, "browser_kind")
@@ -319,6 +404,18 @@ impl BrowserBroker {
                     Some(message.message_id),
                 );
                 let _ = write_envelope(&mut *writer.lock().unwrap(), &response);
+                // Rejected peers cannot impersonate a connection sharing its token.
+                if !self.state.lock().ok().is_some_and(|state| {
+                    state
+                        .connected
+                        .as_ref()
+                        .is_some_and(|connection| Arc::ptr_eq(&connection.writer, &writer))
+                }) {
+                    break;
+                }
+                // An idle paired extension need not send unsolicited traffic.
+                // Peers are bounded; incomplete handshakes expire above.
+                let _ = reader.set_read_timeout(None);
                 connected_hash = Some(token_hash);
                 continue;
             }
@@ -326,12 +423,23 @@ impl BrowserBroker {
         }
         if let Some(token_hash) = connected_hash {
             if let Ok(mut state) = self.state.lock() {
-                if state
-                    .connected
-                    .as_ref()
-                    .is_some_and(|connection| connection.token_hash == token_hash)
-                {
+                if state.connected.as_ref().is_some_and(|connection| {
+                    connection.token_hash == token_hash && Arc::ptr_eq(&connection.writer, &writer)
+                }) {
+                    if state
+                        .connected
+                        .as_ref()
+                        .is_some_and(|connection| connection.active_session.is_some())
+                        && state.integration_errors.is_empty()
+                    {
+                        state
+                            .integration_errors
+                            .push("paired browser disconnected".into());
+                    }
                     state.connected = None;
+                    if state.paired.is_none() {
+                        state.pending = None;
+                    }
                 }
             }
         }
@@ -348,6 +456,9 @@ impl BrowserBroker {
         let Ok(mut state) = self.state.lock() else {
             return false;
         };
+        if state.connected.is_some() {
+            return false;
+        }
         let accepted = if let Some(pairing) = state.paired.as_ref() {
             if !constant_time_hash_match(&pairing.token_hash, &token_hash) {
                 return false;
@@ -396,18 +507,34 @@ impl BrowserBroker {
         match message.message_type {
             MessageType::BlockedAttempt => {
                 if let Some(session_id) = text(&message, "session_id") {
+                    if state.blocked_events.len() == MAX_EVENTS {
+                        if state.integration_errors.is_empty() {
+                            state
+                                .integration_errors
+                                .push("browser event queue overflow".into());
+                        }
+                        return;
+                    }
                     if state.seen_blocked_events.insert(message.message_id) {
                         state.blocked_events.push(session_id);
                     }
-                    if state.seen_blocked_events.len() > 4096 {
+                    if state.seen_blocked_events.len() > MAX_EVENTS {
                         state.seen_blocked_events.clear();
                     }
                 }
             }
-            MessageType::IntegrationError | MessageType::RestoreError => state
-                .integration_errors
-                .push("extension reported an integration error".into()),
-            _ if message.request_id.is_some() => {
+            MessageType::IntegrationError | MessageType::RestoreError
+                if state.integration_errors.is_empty() =>
+            {
+                state
+                    .integration_errors
+                    .push("extension reported an integration error".into());
+            }
+            _ if message
+                .request_id
+                .as_ref()
+                .is_some_and(|id| state.pending_requests.contains(id)) =>
+            {
                 state
                     .responses
                     .insert(message.request_id.clone().unwrap(), message);
@@ -510,13 +637,22 @@ impl BrowserBroker {
         let message = envelope(kind, payload, None);
         let request_id = message.message_id.clone();
         let writer = {
-            let state = self.state.lock().map_err(|_| BrowserError::Socket)?;
+            let mut state = self.state.lock().map_err(|_| BrowserError::Socket)?;
             let pairing = state.paired.as_ref().ok_or(BrowserError::Unpaired)?;
             let connection = state.connected.as_ref().ok_or(BrowserError::Disconnected)?;
             if !constant_time_hash_match(&pairing.token_hash, &connection.token_hash) {
                 return Err(BrowserError::Unpaired);
             }
-            connection.writer.clone()
+            let writer = connection.writer.clone();
+            if state.pending_requests.len() >= MAX_PENDING_REQUESTS {
+                return Err(BrowserError::Rejected);
+            }
+            state.pending_requests.insert(request_id.clone());
+            writer
+        };
+        let _pending = PendingRequest {
+            state: self.state.clone(),
+            id: request_id.clone(),
         };
         write_envelope(
             &mut *writer.lock().map_err(|_| BrowserError::Socket)?,
@@ -610,7 +746,9 @@ impl BrowserBroker {
         }
         match text(&state, "health").as_deref() {
             Some("healthy_idle") => Ok(()),
-            Some("active") if text(&state, "session_id").as_deref() == Some(session_id) => {
+            Some("active" | "cleanup_required")
+                if text(&state, "session_id").as_deref() == Some(session_id) =>
+            {
                 self.stop_session(session_id)
             }
             _ => Err(BrowserError::Rejected),
@@ -664,6 +802,34 @@ impl BrowserBroker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn runtime_directory_rejects_symlinks_and_insecure_existing_permissions() {
+        let root = tempfile::tempdir().unwrap();
+        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let directory = root.path().join(SOCKET_DIRECTORY);
+        std::os::unix::fs::symlink(outside.path(), &directory).unwrap();
+        assert!(socket_path(root.path()).is_err());
+        fs::remove_file(&directory).unwrap();
+        fs::create_dir(&directory).unwrap();
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(socket_path(root.path()).is_err());
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(socket_path(root.path()).is_ok());
+    }
+    #[test]
+    fn listener_preserves_live_sockets_and_regular_files_but_recovers_stale_socket() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("browser.sock");
+        fs::write(&path, b"not a socket").unwrap();
+        assert!(prepare_listener(&path).is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"not a socket");
+        fs::remove_file(&path).unwrap();
+        let listener = prepare_listener(&path).unwrap();
+        assert!(prepare_listener(&path).is_err());
+        drop(listener);
+        assert!(prepare_listener(&path).is_ok());
+    }
     fn test_broker(pairing: Option<BrowserPairing>) -> BrowserBroker {
         BrowserBroker {
             state: Arc::new(Mutex::new(BrokerState {
@@ -714,6 +880,53 @@ mod tests {
         assert_ne!(hash, "not a raw pairing token");
         assert!(constant_time_hash_match(&hash, &hash));
         assert!(!constant_time_hash_match(&hash, &hash_token("different")));
+    }
+    #[test]
+    fn peers_and_unconsumed_events_are_bounded() {
+        let count = Arc::new(AtomicUsize::new(0));
+        let mut permits = (0..MAX_PEERS)
+            .map(|_| PeerPermit::acquire(&count).unwrap())
+            .collect::<Vec<_>>();
+        assert!(PeerPermit::acquire(&count).is_none());
+        permits.pop();
+        assert!(PeerPermit::acquire(&count).is_some());
+        let (broker, token, _peer) = paired_broker_with_peer();
+        for index in 0..MAX_EVENTS + 50 {
+            broker.handle(blocked_event(&format!("event-{index}"), "session"), &token);
+            broker.handle(
+                envelope(
+                    MessageType::State,
+                    BTreeMap::new(),
+                    Some(format!("unsolicited-{index}")),
+                ),
+                &token,
+            );
+        }
+        let state = broker.state.lock().unwrap();
+        assert_eq!(state.blocked_events.len(), MAX_EVENTS);
+        assert_eq!(state.integration_errors.len(), 1);
+        assert!(state.responses.is_empty());
+    }
+
+    #[test]
+    fn duplicate_connection_cannot_replace_an_active_paired_profile() {
+        let (broker, token, _peer) = paired_broker_with_peer();
+        broker
+            .state
+            .lock()
+            .unwrap()
+            .connected
+            .as_mut()
+            .unwrap()
+            .active_session = Some("active".into());
+        assert!(!broker.hello(
+            token,
+            "firefox".into(),
+            "Duplicate".into(),
+            "hello".into(),
+            test_writer()
+        ));
+        assert_eq!(broker.snapshot().state, "active");
     }
     #[test]
     fn broker_snapshot_does_not_expose_a_token() {
@@ -807,48 +1020,50 @@ mod tests {
     }
     #[test]
     fn recovery_accepts_idle_or_stops_the_exact_abandoned_session() {
-        let (broker, token_hash, mut peer) = paired_broker_with_peer();
-        let responder = {
-            let broker = broker.clone();
-            thread::spawn(move || {
-                let request = parse_frame(&read_frame(&mut peer).unwrap().unwrap()).unwrap();
-                assert_eq!(request.message_type, MessageType::Status);
-                broker.handle(
-                    Envelope {
-                        version: VERSION,
-                        message_type: MessageType::State,
-                        message_id: "state".into(),
-                        request_id: Some(request.message_id),
-                        payload: BTreeMap::from([
-                            ("health".into(), Value::String("active".into())),
-                            ("session_id".into(), Value::String("abandoned".into())),
-                            ("timer_state".into(), Value::String("paused".into())),
-                            ("remaining_seconds".into(), Value::from(30)),
-                        ]),
-                    },
-                    &token_hash,
-                );
-                let stop = parse_frame(&read_frame(&mut peer).unwrap().unwrap()).unwrap();
-                assert_eq!(stop.message_type, MessageType::StopSession);
-                assert_eq!(text(&stop, "session_id").as_deref(), Some("abandoned"));
-                broker.handle(
-                    Envelope {
-                        version: VERSION,
-                        message_type: MessageType::StopResult,
-                        message_id: "stopped".into(),
-                        request_id: Some(stop.message_id),
-                        payload: BTreeMap::from([
-                            ("session_id".into(), Value::String("abandoned".into())),
-                            ("accepted".into(), Value::Bool(true)),
-                            ("restored_count".into(), Value::from(1)),
-                        ]),
-                    },
-                    &token_hash,
-                );
-            })
-        };
-        assert!(broker.recover_cleanup("abandoned").is_ok());
-        responder.join().unwrap();
+        for health in ["active", "cleanup_required"] {
+            let (broker, token_hash, mut peer) = paired_broker_with_peer();
+            let responder = {
+                let broker = broker.clone();
+                thread::spawn(move || {
+                    let request = parse_frame(&read_frame(&mut peer).unwrap().unwrap()).unwrap();
+                    assert_eq!(request.message_type, MessageType::Status);
+                    broker.handle(
+                        Envelope {
+                            version: VERSION,
+                            message_type: MessageType::State,
+                            message_id: "state".into(),
+                            request_id: Some(request.message_id),
+                            payload: BTreeMap::from([
+                                ("health".into(), Value::String(health.into())),
+                                ("session_id".into(), Value::String("abandoned".into())),
+                                ("timer_state".into(), Value::String("paused".into())),
+                                ("remaining_seconds".into(), Value::from(30)),
+                            ]),
+                        },
+                        &token_hash,
+                    );
+                    let stop = parse_frame(&read_frame(&mut peer).unwrap().unwrap()).unwrap();
+                    assert_eq!(stop.message_type, MessageType::StopSession);
+                    assert_eq!(text(&stop, "session_id").as_deref(), Some("abandoned"));
+                    broker.handle(
+                        Envelope {
+                            version: VERSION,
+                            message_type: MessageType::StopResult,
+                            message_id: "stopped".into(),
+                            request_id: Some(stop.message_id),
+                            payload: BTreeMap::from([
+                                ("session_id".into(), Value::String("abandoned".into())),
+                                ("accepted".into(), Value::Bool(true)),
+                                ("restored_count".into(), Value::from(1)),
+                            ]),
+                        },
+                        &token_hash,
+                    );
+                })
+            };
+            assert!(broker.recover_cleanup("abandoned").is_ok());
+            responder.join().unwrap();
+        }
 
         let (broker, token_hash, mut peer) = paired_broker_with_peer();
         let responder = {

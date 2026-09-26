@@ -1,6 +1,9 @@
 //! Backend-owned SQLite repositories.
 use rusqlite::{params, Connection, OptionalExtension};
-use std::path::{Path, PathBuf};
+use std::{
+    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+    path::{Path, PathBuf},
+};
 
 #[derive(Clone, Debug)]
 pub struct StoredHistory {
@@ -71,6 +74,25 @@ fn domain_integer(value: i64, field: &str) -> Result<u64, StorageError> {
         .map_err(|_| StorageError::InvalidValue(format!("{field} cannot be negative")))
 }
 
+fn private_data_file(path: &Path) -> Result<std::fs::File, StorageError> {
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || metadata.uid() != unsafe { libc::geteuid() } {
+        return Err(StorageError::InvalidValue(
+            "unsafe data-file ownership or type".into(),
+        ));
+    }
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    Ok(file)
+}
+
 impl SqliteStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StorageError> {
         let path = path.as_ref().to_path_buf();
@@ -78,9 +100,13 @@ impl SqliteStore {
             std::fs::create_dir_all(parent)?;
         }
         let existed = path.exists();
+        let mut file = private_data_file(&path)?;
         if existed {
-            std::fs::copy(&path, path.with_extension("sqlite.backup"))?;
+            let mut backup = private_data_file(&path.with_extension("sqlite.backup"))?;
+            backup.set_len(0)?;
+            std::io::copy(&mut file, &mut backup)?;
         }
+        drop(file);
         let connection = Connection::open(&path)?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
         let store = Self { path, connection };
@@ -497,5 +523,22 @@ mod tests {
         assert_eq!(db.music_sources().unwrap().len(), 1);
         assert_eq!(db.tracks().unwrap().len(), 1);
         assert_eq!(db.queue().unwrap()[0].title, "Song");
+    }
+
+    #[test]
+    fn database_and_backup_are_private_and_symlinks_are_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("data.sqlite");
+        drop(SqliteStore::open(&path).unwrap());
+        drop(SqliteStore::open(&path).unwrap());
+        for path in [&path, &path.with_extension("sqlite.backup")] {
+            assert_eq!(
+                std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        let alias = dir.path().join("alias.sqlite");
+        std::os::unix::fs::symlink(&path, &alias).unwrap();
+        assert!(SqliteStore::open(alias).is_err());
     }
 }

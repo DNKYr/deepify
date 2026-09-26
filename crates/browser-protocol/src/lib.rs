@@ -79,6 +79,13 @@ pub fn parse_frame(bytes: &[u8]) -> Result<Envelope, ProtocolError> {
         return Err(ProtocolError::InvalidMessage);
     }
     if envelope
+        .request_id
+        .as_ref()
+        .is_some_and(|id| id.is_empty() || id.len() > 128 || id.chars().any(char::is_control))
+    {
+        return Err(ProtocolError::InvalidMessage);
+    }
+    if envelope
         .payload
         .keys()
         .any(|key| key == "url" || key == "destination" || key == "title" || key == "query")
@@ -306,6 +313,16 @@ mod tests {
             parse_frame(br#"{"version":1,"type":"heartbeat_ack","message_id":"a"}"#),
             Err(ProtocolError::InvalidMessage)
         );
+    }
+    #[test]
+    fn correlation_ids_are_bounded_and_control_free() {
+        for id in ["x".repeat(129), "line\nbreak".into(), String::new()] {
+            let message = serde_json::json!({"version":1,"type":"heartbeat_ack","message_id":"reply","request_id":id});
+            assert_eq!(
+                parse_frame(&serde_json::to_vec(&message).unwrap()),
+                Err(ProtocolError::InvalidMessage)
+            );
+        }
     }
     #[test]
     fn rejects_url_bearing_payloads_and_versions() {
