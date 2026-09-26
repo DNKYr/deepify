@@ -13,10 +13,14 @@ const mocks = vi.hoisted(() => ({
   dismiss: vi.fn(),
   save: vi.fn(),
   complete: vi.fn(),
+  browserForget: vi.fn(),
+  browserRetry: vi.fn(),
+  browserAccept: vi.fn(),
   add: vi.fn(),
   remove: vi.fn(),
   files: vi.fn(),
   folder: vi.fn(),
+  refreshLibrary: vi.fn(),
   audioToggle: vi.fn(),
   audioRetry: vi.fn(),
   audioPrevious: vi.fn(),
@@ -41,10 +45,14 @@ vi.mock("../src/backend", () => ({
   dismissSummary: mocks.dismiss,
   saveSetting: mocks.save,
   completeSetup: mocks.complete,
+  browserForgetPairing: mocks.browserForget,
+  browserRetryHealth: mocks.browserRetry,
+  browserAcceptPairing: mocks.browserAccept,
   addWhitelist: mocks.add,
   removeWhitelist: mocks.remove,
   importMusicFiles: mocks.files,
   importMusicFolder: mocks.folder,
+  refreshMusicLibrary: mocks.refreshLibrary,
   audioToggle: mocks.audioToggle,
   audioRetryOutput: mocks.audioRetry,
   audioPrevious: mocks.audioPrevious,
@@ -114,6 +122,105 @@ beforeEach(() => {
 });
 
 describe("Phase 2 vertical flow", () => {
+  test("labels unidentified apps even without blocked windows", async () => {
+    mocks.snapshot.mockResolvedValue(base({ unidentifiedAppCount: 2 }));
+    renderApp();
+    expect(
+      await screen.findByText("Unidentified app — allowed in MVP: 2"),
+    ).toBeVisible();
+    expect(screen.getByLabelText(/work duration/i)).toBeVisible();
+  });
+
+  test("opening Sound Library refreshes sources and shows missed changes", async () => {
+    const track = {
+      path: "/music/new.mp3",
+      title: "New discovery",
+      available: true,
+    };
+    mocks.refreshLibrary.mockResolvedValue(
+      base({ tracks: [track], queue: [track] }),
+    );
+    renderApp();
+    await userEvent.click(
+      await screen.findByRole("link", { name: "Sound Library" }),
+    );
+    await waitFor(() => expect(mocks.refreshLibrary).toHaveBeenCalledOnce());
+    expect(await screen.findAllByText("New discovery")).toHaveLength(2);
+  });
+
+  test("an active session keeps its controls visible on a stale settings route", async () => {
+    mocks.snapshot.mockResolvedValue(
+      base({
+        session: {
+          state: "working",
+          remainingSeconds: 42,
+          focusedSeconds: 18,
+          pausedSeconds: 0,
+          blockedAttempts: 0,
+          restrictionsActive: true,
+        },
+      }),
+    );
+    render(
+      <MemoryRouter initialEntries={["/settings"]}>
+        <App />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByRole("button", { name: "Pause" })).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: /run setup/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  test("rejects durations outside the backend's whole-second and 24-hour limits", async () => {
+    renderApp();
+    const duration = await screen.findByLabelText(/work duration/i);
+    for (const invalid of ["1441", "0.001"]) {
+      await userEvent.clear(duration);
+      await userEvent.type(duration, invalid);
+      expect(
+        screen.getByRole("button", { name: /start focus/i }),
+      ).toBeDisabled();
+    }
+    expect(mocks.start).not.toHaveBeenCalled();
+  });
+
+  test("forgetting a browser requires confirmation and keeps keyboard focus in the dialog", async () => {
+    mocks.snapshot.mockResolvedValue(
+      base({
+        health: [
+          {
+            component: "Firefox/Zen profile",
+            status: "healthy",
+            lastChecked: 1,
+            detail: "Paired",
+          },
+        ],
+      }),
+    );
+    renderApp();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("link", { name: "Settings" }));
+    const trigger = screen.getByRole("button", {
+      name: "Forget paired profile",
+    });
+    await user.click(trigger);
+    const cancel = screen.getByRole("button", { name: "Keep paired profile" });
+    expect(cancel).toHaveFocus();
+    expect(mocks.browserForget).not.toHaveBeenCalled();
+    await user.keyboard("{Shift>}{Tab}{/Shift}");
+    expect(
+      screen.getByRole("button", { name: "Forget profile" }),
+    ).toHaveFocus();
+    await user.keyboard("{Tab}");
+    expect(cancel).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(trigger).toHaveFocus();
+    await user.click(trigger);
+    await user.click(screen.getByRole("button", { name: "Forget profile" }));
+    expect(mocks.browserForget).toHaveBeenCalledOnce();
+  });
+
   test("requires a positive duration and keeps optional inputs optional", async () => {
     renderApp();
     const duration = await screen.findByLabelText(/work duration/i);
@@ -180,6 +287,12 @@ describe("Phase 2 vertical flow", () => {
     await user.click(endTrigger);
     expect(screen.getByRole("dialog")).toBeVisible();
     expect(screen.getByRole("button", { name: /keep working/i })).toHaveFocus();
+    await user.keyboard("{Shift>}{Tab}{/Shift}");
+    expect(
+      screen.getAllByRole("button", { name: /^end session$/i }).at(-1),
+    ).toHaveFocus();
+    await user.keyboard("{Tab}");
+    expect(screen.getByRole("button", { name: /keep working/i })).toHaveFocus();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(endTrigger).toHaveFocus();
@@ -190,7 +303,7 @@ describe("Phase 2 vertical flow", () => {
     expect(await screen.findByText("Ended early")).toBeVisible();
   });
 
-  test("blocked-app preflight requires explicit simulated resolution", async () => {
+  test("blocked-app preflight rechecks the backend inventory", async () => {
     const blocked = base({ blockedApps: ["com.example.Chat"] });
     mocks.snapshot.mockResolvedValue(blocked);
     mocks.resolveBlocked.mockResolvedValue(base());
@@ -326,7 +439,7 @@ describe("Phase 2 vertical flow", () => {
     expect(screen.getByRole("button", { name: /start focus/i })).toHaveFocus();
   });
 
-  test("settings save the default duration and expose simulated health repair", async () => {
+  test("settings save the default duration and expose integration health repair", async () => {
     const user = userEvent.setup();
     render(
       <MemoryRouter initialEntries={["/settings"]}>
@@ -351,18 +464,80 @@ describe("Phase 2 vertical flow", () => {
         },
       ],
     });
-    mocks.unhealthy.mockResolvedValue(unhealthy);
+    mocks.repair.mockResolvedValue(unhealthy);
     await user.click(
-      screen.getByRole("button", {
-        name: /simulate unhealthy application-monitor health/i,
-      }),
+      screen.getByRole("button", { name: /rerun integration health checks/i }),
     );
     expect(
       await screen.findByText(/niri application monitor: unhealthy/i),
     ).toBeVisible();
-    await user.click(
-      screen.getByRole("button", { name: /rerun simulated health checks/i }),
-    );
     expect(mocks.repair).toHaveBeenCalledOnce();
+  });
+  test("a refused app close keeps pause and end controls available", async () => {
+    mocks.snapshot.mockResolvedValue(
+      base({
+        session: {
+          state: "working",
+          remainingSeconds: 40,
+          focusedSeconds: 20,
+          pausedSeconds: 0,
+          blockedAttempts: 1,
+          restrictionsActive: true,
+        },
+        blockedApps: ["com.example.Editor"],
+      }),
+    );
+    renderApp();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /close these applications manually/i,
+    );
+    expect(
+      screen.getByRole("button", { name: /^end session$/i }),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: /^pause$/i })).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: /allow com.example.Editor/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  test("an identified blocked app can be whitelisted from preflight", async () => {
+    mocks.snapshot.mockResolvedValue(
+      base({ blockedApps: ["com.example.Editor"] }),
+    );
+    mocks.resolveBlocked.mockResolvedValue(base());
+    renderApp();
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Allow com.example.Editor" }),
+    );
+    expect(mocks.add).toHaveBeenCalledWith("application", "com.example.Editor");
+    expect(mocks.resolveBlocked).toHaveBeenCalledOnce();
+  });
+
+  test("disconnected browser setup can reach the pairing step", async () => {
+    mocks.snapshot.mockResolvedValue(
+      base({
+        settings: {
+          defaultDurationSeconds: 1500,
+          theme: "obsidian",
+          notifications: true,
+          setupComplete: false,
+        },
+        health: [
+          {
+            component: "Firefox/Zen profile",
+            status: "unhealthy",
+            lastChecked: 1,
+            detail: "Pairing required",
+          },
+        ],
+      }),
+    );
+    renderApp();
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Continue" }),
+    );
+    expect(
+      screen.getByRole("button", { name: "Pair this profile" }),
+    ).toBeVisible();
   });
 });

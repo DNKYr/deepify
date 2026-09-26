@@ -16,6 +16,7 @@ import {
   importMusicFiles,
   importMusicFolder,
   onSnapshotChanged,
+  refreshMusicLibrary,
   removeWhitelist,
   repairIntegrations,
   resolveBlockedApps,
@@ -25,10 +26,6 @@ import {
   sessionPause,
   sessionResume,
   sessionStart,
-  simulateBlockedAttempt,
-  simulateBlockedApp,
-  simulateRuntimeFailure,
-  simulateUnhealthyIntegration,
   testWhitelist,
   type AppSnapshot,
   type SessionSummary,
@@ -107,13 +104,16 @@ export function App() {
         Loading Deepify…
       </main>
     );
-  if (!snapshot.settings.setupComplete)
+  if (!snapshot.settings.setupComplete && !active)
     return (
       <SetupWizard
         health={snapshot.health}
         onComplete={async () => setSnapshot(await completeSetup())}
         onAcceptPairing={async () => setSnapshot(await browserAcceptPairing())}
         onRetryBrowser={async () => setSnapshot(await browserRetryHealth())}
+        onRetryIntegrations={async () =>
+          setSnapshot(await repairIntegrations())
+        }
       />
     );
   return (
@@ -155,16 +155,42 @@ export function App() {
           Website protection is real only for a paired, healthy Firefox/Zen
           profile.
         </strong>{" "}
-        Niri application monitoring and Noctalia Do Not Disturb remain
-        simulated.
+        {visualDemoSnapshot
+          ? "Visual preview — all protection shown here is simulated."
+          : "Sessions also require Niri window monitoring and Noctalia Do Not Disturb."}
       </section>
-      {error && (
-        <p className="error" role="alert">
-          {error}
-        </p>
-      )}
       <main className="content">
-        <Routes>
+        {error && (
+          <p className="error" role="alert">
+            {error}
+          </p>
+        )}
+        {(snapshot.unidentifiedAppCount ?? 0) > 0 && (
+          <p role="status">
+            Unidentified app — allowed in MVP: {snapshot.unidentifiedAppCount}
+          </p>
+        )}
+        {!active && snapshot.session.latestNotice && (
+          <p className="warning" role="alert">
+            {snapshot.session.latestNotice}
+          </p>
+        )}
+        {snapshot.health.some((item) => item.status === "unhealthy") && (
+          <section
+            className="warning"
+            role="status"
+            aria-label="Integration health"
+          >
+            {snapshot.health
+              .filter((item) => item.status === "unhealthy")
+              .map((item) => (
+                <p key={item.component}>
+                  {item.component}: {item.detail}
+                </p>
+              ))}
+          </section>
+        )}
+        <Routes location={active ? "/" : undefined}>
           <Route
             path="/"
             element={
@@ -243,9 +269,10 @@ function FocusRoom({
   }, [ending]);
   const session = snapshot.session;
   const planned = Number(duration) * 60;
-  const valid = Number.isFinite(planned) && planned > 0;
+  const valid = Number.isInteger(planned) && planned > 0 && planned <= 86400;
   const start = async () => {
-    if (!valid) return report("Enter a duration greater than zero.");
+    if (!valid)
+      return report("Enter a duration between one second and 24 hours.");
     setValidating(true);
     try {
       update(
@@ -256,8 +283,9 @@ function FocusRoom({
         ),
       );
     } catch {
+      update(await appSnapshot());
       report(
-        `Pre-session validation failed. Review browser integration health. Diagnostic ID: ${snapshot.diagnosticId}`,
+        `Pre-session validation failed. Review the open applications and integration health. Diagnostic ID: ${snapshot.diagnosticId}`,
       );
     } finally {
       setValidating(false);
@@ -270,18 +298,28 @@ function FocusRoom({
         onDismiss={async () => update(await dismissSummary())}
       />
     );
-  if (snapshot.blockedApps.length > 0)
+  if (snapshot.blockedApps.length > 0 && session.state === "not_working")
     return (
       <section className="card focus" aria-labelledby="blocked-title">
         <p className="eyebrow">PRE-SESSION CHECK</p>
         <h2 id="blocked-title">Close blocked apps to continue</h2>
         <p>
-          Simulated protection found applications outside your next-session
-          whitelist:
+          These applications are outside your next-session whitelist. Close
+          their windows or allow an application for your next session:
         </p>
         <ul>
           {snapshot.blockedApps.map((appId) => (
-            <li key={appId}>{appId}</li>
+            <li key={appId}>
+              {appId}{" "}
+              <button
+                onClick={async () => {
+                  await addWhitelist("application", appId);
+                  update(await resolveBlockedApps());
+                }}
+              >
+                Allow {appId}
+              </button>
+            </li>
           ))}
         </ul>
         <button
@@ -290,7 +328,9 @@ function FocusRoom({
         >
           I closed them — check again
         </button>
-        <p role="status">No real application was closed or blocked.</p>
+        <p role="status">
+          Deepify waits for you to resolve these windows before starting.
+        </p>
       </section>
     );
   if (
@@ -332,7 +372,7 @@ function FocusRoom({
         <section aria-label="Sound">
           <h3>Sound</h3>
           <p>
-            {snapshot.playback.currentIndex === undefined
+            {snapshot.playback.currentIndex == null
               ? "No music selected"
               : (snapshot.queue[snapshot.playback.currentIndex]?.title ??
                 "Unavailable track")}
@@ -390,11 +430,20 @@ function FocusRoom({
         <section>
           <h3>Focus Shield</h3>
           <p>
-            Restrictions active:{" "}
-            {session.restrictionsActive ? "Yes — simulated" : "No"} · Blocked
-            attempts: {session.blockedAttempts}
+            Restrictions active: {session.restrictionsActive ? "Yes" : "No"} ·
+            Blocked attempts: {session.blockedAttempts}
           </p>
           <p>{session.latestNotice}</p>
+          {snapshot.blockedApps.length > 0 && (
+            <div className="warning" role="alert">
+              <p>
+                Close these applications manually:{" "}
+                {snapshot.blockedApps.join(", ")}. They remained open after a
+                close request. Save any unsaved work; Deepify will not force
+                them to quit.
+              </p>
+            </div>
+          )}
         </section>
         {ending && (
           <div
@@ -404,6 +453,23 @@ function FocusRoom({
             aria-describedby="end-description"
             className="dialog"
             onKeyDown={(event) => {
+              if (event.key === "Tab") {
+                const buttons =
+                  event.currentTarget.querySelectorAll<HTMLButtonElement>(
+                    "button",
+                  );
+                const target = event.shiftKey
+                  ? buttons[buttons.length - 1]
+                  : buttons[0];
+                if (
+                  (event.shiftKey && document.activeElement === buttons[0]) ||
+                  (!event.shiftKey &&
+                    document.activeElement === buttons[buttons.length - 1])
+                ) {
+                  event.preventDefault();
+                  target?.focus();
+                }
+              }
               if (event.key === "Escape") {
                 event.preventDefault();
                 setEnding(false);
@@ -479,7 +545,7 @@ function FocusRoom({
               </li>
             ))}
           </ul>
-          <p>Deepify starts automatically when all simulated checks pass.</p>
+          <p>Deepify starts automatically when all integration checks pass.</p>
         </section>
       )}
       <p>
@@ -500,7 +566,11 @@ function Summary({
   return (
     <section className="card summary">
       <p className="eyebrow">SESSION SUMMARY</p>
-      <h2>Deep work complete</h2>
+      <h2>
+        {summary.reason === "completed"
+          ? "Deep work complete"
+          : "Session ended"}
+      </h2>
       <p className="timer">{time(summary.focusedSeconds)}</p>
       <dl>
         <dt>Blocked attempts</dt>
@@ -510,7 +580,7 @@ function Summary({
         <dt>Cleanup</dt>
         <dd>
           {summary.cleanupComplete
-            ? "Simulated restrictions removed"
+            ? "Restrictions removed"
             : "Incomplete — open recovery"}
         </dd>
       </dl>
@@ -522,17 +592,43 @@ function Summary({
 }
 
 function SoundLibrary({ snapshot, update }: PageProps) {
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let mounted = true;
+    void refreshMusicLibrary()
+      .then((value) => {
+        if (mounted) update(value);
+      })
+      .catch(() => {
+        if (mounted)
+          setError("The library could not refresh. Reopen it to try again.");
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [update]);
+  const importSource = async (action: typeof importMusicFiles) => {
+    setError("");
+    try {
+      update(await action());
+    } catch {
+      setError(
+        "Music could not be imported. Check that the selected files or folder are accessible.",
+      );
+    }
+  };
   return (
     <section className="card">
       <h2>Sound Library</h2>
       <div className="controls">
-        <button onClick={async () => update(await importMusicFiles())}>
+        <button onClick={() => void importSource(importMusicFiles)}>
           Import MP3 files
         </button>
-        <button onClick={async () => update(await importMusicFolder())}>
+        <button onClick={() => void importSource(importMusicFolder)}>
           Import folder
         </button>
       </div>
+      {error && <p role="alert">{error}</p>}
       <p>
         MP3 only · live folders rescan recursively · shuffle/repeat unavailable
         in MVP
@@ -620,13 +716,13 @@ function Whitelist({
         ))}
       </ul>
       <p>
-        Implicitly allowed: Deepify · tentative MVP system components · local
-        addresses
+        Implicitly allowed: Deepify · Firefox and Zen · desktop shell,
+        authentication and portal dialogs · local addresses
       </p>
       <p>
         <strong>Unidentified app — allowed in MVP</strong>. Private windows and
-        unmonitored browser profiles may bypass website protection; application
-        protection remains simulated.
+        unmonitored browser profiles may bypass website protection. Terminal
+        commands are outside window-based enforcement.
       </p>
       <h3>Test current configuration</h3>
       <label>
@@ -713,6 +809,28 @@ function History({ snapshot }: { snapshot: AppSnapshot }) {
 
 function Settings({ snapshot, update }: PageProps) {
   const navigate = useNavigate();
+  const [error, setError] = useState("");
+  const [forgetting, setForgetting] = useState(false);
+  const forgetTrigger = useRef<HTMLButtonElement>(null);
+  const cancelForget = useRef<HTMLButtonElement>(null);
+  const wasForgetting = useRef(false);
+  useEffect(() => {
+    if (forgetting) cancelForget.current?.focus();
+    else if (wasForgetting.current) forgetTrigger.current?.focus();
+    wasForgetting.current = forgetting;
+  }, [forgetting]);
+  const apply = async (action: () => Promise<AppSnapshot>) => {
+    try {
+      update(await action());
+      setError("");
+      return true;
+    } catch {
+      setError(
+        "The setting could not be changed. Check integration health and try again.",
+      );
+      return false;
+    }
+  };
   const active = ["starting", "working", "paused", "ending"].includes(
     snapshot.session.state,
   );
@@ -721,10 +839,57 @@ function Settings({ snapshot, update }: PageProps) {
   );
   const defaultDurationSeconds = Number(defaultDuration) * 60;
   const validDefaultDuration =
-    Number.isFinite(defaultDurationSeconds) && defaultDurationSeconds > 0;
+    Number.isInteger(defaultDurationSeconds) &&
+    defaultDurationSeconds > 0 &&
+    defaultDurationSeconds <= 86400;
   return (
     <section className="card">
       <h2>Settings</h2>
+      {error && <p role="alert">{error}</p>}
+      {forgetting && (
+        <div
+          className="dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="forget-title"
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              setForgetting(false);
+            }
+            if (event.key === "Tab") {
+              const buttons =
+                event.currentTarget.querySelectorAll<HTMLButtonElement>(
+                  "button",
+                );
+              if (
+                (event.shiftKey && document.activeElement === buttons[0]) ||
+                (!event.shiftKey && document.activeElement === buttons[1])
+              ) {
+                event.preventDefault();
+                buttons[event.shiftKey ? 1 : 0]?.focus();
+              }
+            }
+          }}
+        >
+          <h3 id="forget-title">Forget this browser profile?</h3>
+          <p>
+            You will need to pair a browser again before starting another
+            session.
+          </p>
+          <button ref={cancelForget} onClick={() => setForgetting(false)}>
+            Keep paired profile
+          </button>
+          <button
+            className="danger"
+            onClick={async () => {
+              if (await apply(browserForgetPairing)) setForgetting(false);
+            }}
+          >
+            Forget profile
+          </button>
+        </div>
+      )}
       <p>
         Local diagnostic ID: <code>{snapshot.diagnosticId}</code>
       </p>
@@ -735,14 +900,10 @@ function Settings({ snapshot, update }: PageProps) {
             {item.component}: {item.status} · {item.detail}
             {item.component === "Firefox/Zen profile" && !active && (
               <span className="controls">
-                <button
-                  onClick={async () => update(await browserRetryHealth())}
-                >
+                <button onClick={() => void apply(browserRetryHealth)}>
                   Retry browser
                 </button>
-                <button
-                  onClick={async () => update(await browserForgetPairing())}
-                >
+                <button ref={forgetTrigger} onClick={() => setForgetting(true)}>
                   Forget paired profile
                 </button>
               </span>
@@ -750,21 +911,16 @@ function Settings({ snapshot, update }: PageProps) {
           </li>
         ))}
       </ul>
-      <button onClick={async () => update(await repairIntegrations())}>
-        Rerun simulated health checks
-      </button>
-      <button
-        onClick={async () => update(await simulateUnhealthyIntegration())}
-      >
-        Simulate unhealthy application-monitor health
+      <button onClick={() => void apply(repairIntegrations)}>
+        Rerun integration health checks
       </button>
       <h3>Focus defaults</h3>
       <form
         onSubmit={async (event) => {
           event.preventDefault();
           if (validDefaultDuration) {
-            update(
-              await saveSetting(
+            await apply(() =>
+              saveSetting(
                 "default_duration_seconds",
                 String(defaultDurationSeconds),
               ),
@@ -788,7 +944,7 @@ function Settings({ snapshot, update }: PageProps) {
         <select
           value={snapshot.settings.theme}
           onChange={async (event) =>
-            update(await saveSetting("theme", event.target.value))
+            apply(() => saveSetting("theme", event.target.value))
           }
         >
           <option value="obsidian">Obsidian dark</option>
@@ -800,8 +956,8 @@ function Settings({ snapshot, update }: PageProps) {
           type="checkbox"
           checked={snapshot.settings.notifications}
           onChange={async (event) =>
-            update(
-              await saveSetting("notifications", String(event.target.checked)),
+            await apply(() =>
+              saveSetting("notifications", String(event.target.checked)),
             )
           }
         />{" "}
@@ -810,8 +966,7 @@ function Settings({ snapshot, update }: PageProps) {
       <h3>Recovery and privacy</h3>
       <button
         onClick={async () => {
-          update(await rerunSetup());
-          navigate("/");
+          if (await apply(rerunSetup)) navigate("/");
         }}
       >
         Run setup wizard again
@@ -820,16 +975,6 @@ function Settings({ snapshot, update }: PageProps) {
         Emergency recovery retries unresolved cleanup before another session may
         start.
       </p>
-      <h3>Developer simulation</h3>
-      <button onClick={async () => update(await simulateBlockedApp())}>
-        Simulate blocked app at preflight
-      </button>
-      <button onClick={async () => update(await simulateBlockedAttempt())}>
-        Simulate blocked attempt
-      </button>
-      <button onClick={async () => update(await simulateRuntimeFailure())}>
-        Simulate runtime failure
-      </button>
     </section>
   );
 }

@@ -1,4 +1,5 @@
 :root {
+  color-scheme: dark;
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
   color: #e6e7eb;
   background: #17181c;
@@ -9,12 +10,14 @@
   --text: #e6e7eb;
   --muted: #a6a8b2;
   --accent: #aab9ff;
+  --on-accent: #17181c;
   --danger: #ff9d9d;
   --warning: #edc69c;
   --success: #8fd1aa;
   --ring: #d8ddff;
 }
 :root[data-theme="mist"] {
+  color-scheme: light;
   color: #20232a;
   background: #eef0f3;
   --background: #eef0f3;
@@ -24,6 +27,7 @@
   --text: #20232a;
   --muted: #59616e;
   --accent: #4358b8;
+  --on-accent: #fff;
   --danger: #a02f3a;
   --warning: #875510;
   --success: #267047;
@@ -128,7 +132,6 @@ p {
   font-size: 0.8rem;
 }
 .error {
-  grid-area: status;
   color: var(--danger);
 }
 .card {
@@ -169,7 +172,7 @@ p {
 }
 .primary {
   background: var(--accent);
-  color: #17181c;
+  color: var(--on-accent);
   border-color: var(--accent);
   font-weight: 700;
 }

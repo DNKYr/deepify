@@ -81,9 +81,9 @@ test('P2-06 through P2-10 expose every prototype screen and production audio bou
   ].map(read)).then(parts => parts.join('\n'));
   for (const label of [
     'Focus Room', 'Sound Library', 'Whitelist', 'Session History', 'Settings',
-    'Simulated protection', 'Unidentified app — allowed in MVP',
+    'Website protection', 'Unidentified app — allowed in MVP',
     'Restrictions remain active while paused', 'Blocked attempts', 'Skip music',
-    'Default duration', 'Rerun simulated health checks',
+    'Default duration', 'Rerun integration health checks',
   ]) assert.match(allUi, new RegExp(label, 'i'), `missing required UI state: ${label}`);
 
   const cargo = await read('apps/desktop/src-tauri/Cargo.toml');
