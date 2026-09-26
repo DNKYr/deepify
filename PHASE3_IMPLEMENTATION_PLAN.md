@@ -2,7 +2,7 @@
 
 ## Status
 
-- **Stage:** Planned — ready for sequential implementation
+- **Stage:** Production browser path implemented — see `PHASE3_HANDOFF.md`; detailed acceptance audit remains part of release verification
 - **Depends on:** Accepted Phase 2 desktop prototype and approved Phase 1 browser behavior
 - **Architecture:** [`ARCHITECTURE.md`](ARCHITECTURE.md)
 - **Phase 2 handoff:** [`PHASE2_HANDOFF.md`](PHASE2_HANDOFF.md)
@@ -189,7 +189,7 @@ Every milestone must leave existing Phase 2 behavior and automated gates passing
 ## P3-01 — Freeze the production browser contract and interception strategy
 
 **Priority:** Critical  
-**Status:** Planned
+**Status:** Implemented in the Phase 3 delivery; see `validation/PHASE3_CHECKS.md` for evidence and external gates
 
 ### Tasks
 
@@ -231,7 +231,7 @@ Every milestone must leave existing Phase 2 behavior and automated gates passing
 ## P3-02 — Implement the bounded Rust protocol and production native host
 
 **Priority:** Critical  
-**Status:** Planned  
+**Status:** Implemented in the Phase 3 delivery; see `validation/PHASE3_CHECKS.md` for evidence and external gates
 **Depends on:** P3-01
 
 ### Tasks
@@ -262,7 +262,7 @@ Every milestone must leave existing Phase 2 behavior and automated gates passing
 ## P3-03 — Add the desktop browser broker and pairing persistence
 
 **Priority:** Critical  
-**Status:** Planned  
+**Status:** Implemented in the Phase 3 delivery; see `validation/PHASE3_CHECKS.md` for evidence and external gates
 **Depends on:** P3-02
 
 ### Tasks
@@ -303,7 +303,7 @@ Every milestone must leave existing Phase 2 behavior and automated gates passing
 ## P3-04 — Implement extension connection, pairing, and health
 
 **Priority:** Critical  
-**Status:** Planned  
+**Status:** Implemented in the Phase 3 delivery; see `validation/PHASE3_CHECKS.md` for evidence and external gates
 **Depends on:** P3-03
 
 ### Tasks
@@ -334,7 +334,7 @@ Every milestone must leave existing Phase 2 behavior and automated gates passing
 ## P3-05 — Implement URL enforcement and the blocked-page experience
 
 **Priority:** Critical  
-**Status:** Planned  
+**Status:** Implemented in the Phase 3 delivery; see `validation/PHASE3_CHECKS.md` for evidence and external gates
 **Depends on:** P3-04
 
 ### Tasks
@@ -377,7 +377,7 @@ Every milestone must leave existing Phase 2 behavior and automated gates passing
 ## P3-06 — Wire the production browser adapter into session start and stop
 
 **Priority:** Critical  
-**Status:** Planned  
+**Status:** Implemented in the Phase 3 delivery; see `validation/PHASE3_CHECKS.md` for evidence and external gates
 **Depends on:** P3-05
 
 ### Tasks
@@ -417,7 +417,7 @@ Every milestone must leave existing Phase 2 behavior and automated gates passing
 ## P3-07 — Connect blocked attempts, timer state, and runtime failures
 
 **Priority:** High  
-**Status:** Planned  
+**Status:** Implemented in the Phase 3 delivery; see `validation/PHASE3_CHECKS.md` for evidence and external gates
 **Depends on:** P3-06
 
 ### Tasks
@@ -449,7 +449,7 @@ Every milestone must leave existing Phase 2 behavior and automated gates passing
 ## P3-08 — Complete tab restoration and cross-process recovery
 
 **Priority:** Critical  
-**Status:** Planned  
+**Status:** Implemented in the Phase 3 delivery; see `validation/PHASE3_CHECKS.md` for evidence and external gates
 **Depends on:** P3-07
 
 ### Tasks
@@ -482,7 +482,7 @@ Every milestone must leave existing Phase 2 behavior and automated gates passing
 ## P3-09 — Replace simulated browser setup and health UI
 
 **Priority:** High  
-**Status:** Planned  
+**Status:** Implemented in the Phase 3 delivery; see `validation/PHASE3_CHECKS.md` for evidence and external gates
 **Depends on:** P3-08
 
 ### Tasks
@@ -513,7 +513,7 @@ Every milestone must leave existing Phase 2 behavior and automated gates passing
 ## P3-10 — Package the extension and native host for NixOS
 
 **Priority:** High  
-**Status:** Planned  
+**Status:** Implemented in the Phase 3 delivery; see `validation/PHASE3_CHECKS.md` for evidence and external gates
 **Depends on:** P3-09
 
 ### Tasks
@@ -545,7 +545,7 @@ Every milestone must leave existing Phase 2 behavior and automated gates passing
 ## P3-11 — Run production Firefox and Zen integration validation
 
 **Priority:** Critical  
-**Status:** Planned  
+**Status:** Implemented in the Phase 3 delivery; see `validation/PHASE3_CHECKS.md` for evidence and external gates
 **Depends on:** P3-10
 
 ### Automated scenarios
@@ -600,7 +600,7 @@ redacted, and PASS/FAIL/SKIPPED status in `validation/PHASE3_CHECKS.md`.
 ## P3-12 — Complete Phase 3 acceptance and handoff
 
 **Priority:** Critical  
-**Status:** Planned  
+**Status:** Implemented in the Phase 3 delivery; see `validation/PHASE3_CHECKS.md` for evidence and external gates
 **Depends on:** P3-11
 
 ### Tasks

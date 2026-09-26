@@ -2,7 +2,7 @@
 
 ## Status
 
-- **Stage:** Phase 1 complete; Phase 2 functional prototype complete
+- **Stage:** Phase 5 refinement and release acceptance
 - **Document type:** Living design document
 - **Last updated:** 2026-08-28
 
@@ -288,16 +288,17 @@ Gentle and Strict modes may be designed after the Standard-mode MVP is validated
 
 ## 8. Next Work
 
-Phase 2 is complete. The runnable desktop prototype implements the approved flow,
-local persistence, production local MP3 playback, notifications, recovery, and
-explicitly simulated restriction adapters. Verification and the P1-24 prototype
-mapping are recorded in [`validation/PHASE2_CHECKS.md`](validation/PHASE2_CHECKS.md).
+The Phase 3 browser path is implemented, with historical target-browser evidence in
+[`PHASE3_HANDOFF.md`](PHASE3_HANDOFF.md). Phase 4 now has production Niri and
+Noctalia adapters, durable DND cleanup, and real setup/settings/preflight UI.
+[`PHASE4_IMPLEMENTATION_PLAN.md`](PHASE4_IMPLEMENTATION_PLAN.md) and
+[`validation/PHASE4_CHECKS.md`](validation/PHASE4_CHECKS.md) track the current work.
 
-Next work is the sequential Phase 3 production browser integration defined in
-[`PHASE3_IMPLEMENTATION_PLAN.md`](PHASE3_IMPLEMENTATION_PLAN.md), followed by
-Phase 4 Niri/Noctalia integration. Release follow-ups remain hard-crash and
-lifecycle validation, real PipeWire device switching, signed browser publication,
-and the target system-component inventory.
+Combined-session, desktop lifecycle, exit/crash recovery and audio-output recovery
+now have passing target evidence in [`validation/PHASE5_CHECKS.md`](validation/PHASE5_CHECKS.md).
+Finish the current-source packaged installation checks and final handoff. The full
+requirement map is [`validation/MVP_ACCEPTANCE.md`](validation/MVP_ACCEPTANCE.md).
+Signed browser installation remains an external release gate.
 
 ---
 

@@ -2,12 +2,12 @@
 
 ## Status
 
-- **Stage:** Phase 3 browser-enforcement implementation in progress
+- **Stage:** Phase 4 production adapters implemented; combined acceptance and Phase 5 remain open
 - **Target:** NixOS, Niri, and Wayland
 - **Application model:** Local-only Tauri desktop application with a Firefox extension
 - **Related documents:** [`DESIGN.md`](DESIGN.md), [`PHASE1_ISSUES.md`](PHASE1_ISSUES.md), and [`PHASE2_IMPLEMENTATION_PLAN.md`](PHASE2_IMPLEMENTATION_PLAN.md)
 
-This document defines the intended production architecture. Phase 3 connects the Firefox/Zen adapter; Phase 4 will connect Niri and Noctalia enforcement.
+This document defines the intended production architecture. The browser, Niri, and Noctalia adapters are implemented. Current verification and remaining release work are recorded in `validation/PHASE5_CHECKS.md`.
 
 ---
 

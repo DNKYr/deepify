@@ -1,10 +1,19 @@
 # Deepify
 
-Deepify is a local-only Tauri focus-room prototype for NixOS. Phase 3 adds real
-website restriction for one explicitly paired, healthy Firefox/Zen profile;
-the browser extension is required before a focus session can start. Application
-restriction (Niri) and Do Not Disturb (Noctalia) remain explicitly simulated
-until Phase 4.
+Deepify is a local-only Tauri focus application for NixOS, Niri, and Wayland.
+Phase 5 refinement is in progress: the desktop uses the real Firefox/Zen browser adapter,
+Niri window monitoring, and Noctalia Do Not Disturb. A paired healthy browser
+and healthy desktop integrations are required before a session starts.
+
+Niri sends one cooperative close request per blocked window; an application can
+refuse or ask you to save work. Deepify then shows a manual-close warning and
+keeps the session controls available. It never force-kills blocked applications.
+DND's previous state is checkpointed before enabling it and restored on cleanup.
+
+Current evidence and remaining acceptance work are in
+[validation/PHASE5_CHECKS.md](validation/PHASE5_CHECKS.md) and the
+[MVP acceptance audit](validation/MVP_ACCEPTANCE.md). Desktop lifecycle and audio recovery are verified. Final packaged-install checks
+and signed browser installation remain open.
 
 ## Develop and verify
 
@@ -40,6 +49,12 @@ audio, and storage. React is a presentation layer over typed Tauri commands.
 Application data is stored locally under Tauri's `com.deepify.desktop` data
 directory; the product has no account, analytics, or cloud service.
 
+On Linux, Deepify supplies GDK's default 96 DPI when the process's screen
+resolution is unspecified or invalid, before creating the webview. This prevents
+negative viewport dimensions on affected WebKitGTK runtimes while preserving
+valid DPI settings and monitor scaling. See
+[the display validation record](validation/DISPLAY_CHECKS.md).
+
 To install the native host, link its generated
 `lib/mozilla/native-messaging-hosts/com.deepify.browser.json` into Firefox's
 native-messaging-host directory (for Home Manager, commonly
@@ -49,6 +64,20 @@ signed; private windows and additional/unpaired profiles are disclosed bypasses.
 Zen Beta 1.21.15b was verified with the same native-host manifest path in a
 disposable profile.
 
-See [PHASE3_HANDOFF.md](PHASE3_HANDOFF.md) for current verification and release
-gates. `PHASE2_HANDOFF.md` and `validation/PHASE2_CHECKS.md` remain the historic
-prototype evidence; Niri and Noctalia enforcement follows in Phase 4.
+See [PHASE3_HANDOFF.md](PHASE3_HANDOFF.md) for historical browser verification
+and its external signing gate. `PHASE2_HANDOFF.md` and `validation/PHASE2_CHECKS.md` remain the historic
+prototype evidence.
+
+## Desktop integrations
+
+Run Deepify inside the same user session as Niri and Noctalia Shell. The `niri`
+and `noctalia-shell` commands must be on PATH and their IPC sockets accessible.
+The verified Noctalia target is the legacy shell CLI exposing
+`ipc call state all` and `ipc call notifications enableDND/disableDND`.
+Settings and setup show installation, permission, timeout, and protocol errors.
+
+Deepify, Firefox/Zen, and exact shell/authentication/portal IDs are implicitly
+allowed. Other application IDs need explicit rules; unidentified windows and
+terminal-hosted commands remain disclosed MVP bypasses. The window policy never
+uses window titles or terminal contents. If cleanup is interrupted, reopen
+Deepify and use **Rerun integration health checks** before starting again.
